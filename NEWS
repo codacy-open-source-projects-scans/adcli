@@ -1,0 +1,131 @@
+0.9.1
+ - tools: add show-computer command [rhbz#1737342]
+ - add description option to join and update [rhbz#1737342]
+ - Use GSS-SPNEGO if available [rhbz#1762420]
+ - add option use-ldaps [rhbz#1762420]
+ - tools: disable SSSD's locator plugin [rhbz#1762633]
+ - doc: explain required AD permissions [gfo#20]
+ - computer: add create-msa sub-command [rhbz#1854112}
+ - Add account-disable option [gfo#21]
+
+0.9.0
+ - Improve parsing of NetLogon replies [bfo#98143], [bfo#100466]
+ - Add support of read-only domain controllers (RODC)
+ - New option --add-samba-data to update Samba's TDBs [gfo#6]
+ - New option --trusted-for-delegation [rhbz#1538730]
+ - Only update attributes given on the command line
+ - Support join with privileged account [rhbz#1542354]
+ - New options --add-service-principal and --remove-service-principal
+ - Check all DC according to MS-DISO [gfo#13]
+ - Increment kvno after password change with user creds [rhbz#1642546]
+ - Determine FQDN is needed [gfo#1]
+ - New option --nis-domain [gfo#2]
+ - Always add "default" principals at join [rhbz#1644311]
+ - Add 'testjoin' command [rhbz#1622583]
+ - Improve handling on encryption types [gfo#3], [rhbz#1717355], [rhbz#1683745]
+ (bfo: https://bugs.freedesktop.org/,
+  gfo: https://gitlab.freedesktop.org/realmd/adcli/issues/
+  rhbz: https://bugzilla.redhat.com/)
+
+0.8.2
+ - Use keytab for realm and NetBIOS name when delete-computer
+ - Patch adcli.xml to fix documentation [93913]
+ - Remove \n or \r\n from password on stdin [78448]
+ - Update the documentation about the default kerberos cache [96544]
+ - Fix check for EAGAIN or EINTR [71257]
+
+0.8.1
+ - Update keytab when computer password lifetime is zero
+ - Fix typo in man page
+
+0.8.0
+ - Update keytab and computer account with 'adcli update' [#92908]
+ - Automatic time limited updates of keytab [#93282]
+ - Increment kvno after password change [#91185]
+ - Tons of other build and bug fixes [#86970 #86971 #93222 #93399]
+
+0.7.6
+ - More helpful messages about Computer OU failures
+ - Use "host/fqdn@REALM" as default SPN instead of "HOST/fqdn@REALM"
+ - Fix typos found by Tomas Babej
+ - Other build fixes
+
+0.7.5
+ - Don't use CLDAP when discovering an IPv6 address
+ - Place IPv6 addresses properly into our temp krb5.conf
+ - Limit number of discovered servers correctly
+ - Stop discovery when an LDAP search fails
+
+0.7.4
+ - Correctly handle truncating long host names [#69016]
+ - Try to contact all available addresses for discovery [#68110]
+ - Correct pointer type to ldap_set_option when setting SSF_MIN [#69038]
+
+0.7.3
+ - Don't try to set encryption types on Windows 2003 and earlier [#67058]
+ - Other build fix
+
+0.7.2
+ - Always show info for --domain-controller if provided
+ - Delete current host if no host specified to delete-computer
+ - Build and typo fixes
+
+0.7.1
+ - Fix null pointer access
+ - Tweak way we process CLDAP ping responses
+ - Fall back to guessing if discovering salt fails
+
+0.7
+ - Work around krb5 bugs in krb5_get_init_creds_password()\
+ - Fix warnings and related issues
+ - Fix use of freed memory
+
+0.6
+ - Support joining via IP address [#63907]
+ - Add a --one-time-password to join command
+ - Add option to print out the machine password after a join
+ - Fine tune the --os-name and --os-version arguments [#54489]
+ - Add --user-principal argument for joining domains [#62755]
+ - Other tweaks and docs
+
+0.5
+ - Implement domain discovery, including support for sites [#54490]
+ - Add 'create-user' and 'delete-user' commands [#54492]
+ - Add 'reset-computer' and 'delete-computer' commands [#54492]
+ - Add a new 'adcli info' command [#54490]
+ - No longer export a library, the cli is our interface
+ - Support using --login-ccache without an argument
+ - Add support for setting operatingSystem and related attrs
+ - When --user is specified don't try computer login
+ - Only include /etc/krb5.conf if it exists [#57403]
+ - Check for SASL headers when configuring
+ - Look up the nETBIOSName correctly [#57064]
+ - Add some basic unit tests
+ - Various crasher fixes
+ - Documentation, manual page
+ - Cleanup the adcli arguments
+ - Build fixes [#60561 ...]
+
+0.4
+ - Use a private krb5.conf file, so that we can use specific domain server.
+ - Rework how computer account is located and created
+ - Don't follow referalls when searching LDAP server
+ - Build fixes
+
+0.3
+ - Don't use DNS to lookup the host name for enrollment
+ - Don't try to update userAccountControl for precreated accounts
+ - Allow use of host names without any dot
+ - Build fixes
+
+0.2
+ - Return the correct exit codes
+ - Implement the --show-details join option
+ - Add --one-time-password to the 'preset' command
+ - Add specific ways to read passwords
+ - Specify domain in --domain parameter
+ - Clean up option parsing
+ - Fix bugs
+
+0.1
+ - Initial unstable release

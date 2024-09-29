@@ -1,0 +1,1305 @@
+<?xml version='1.0'?>
+<!DOCTYPE refentry PUBLIC "-//OASIS//DTD DocBook XML V4.3//EN"
+	"http://www.oasis-open.org/docbook/xml/4.3/docbookx.dtd"
+[
+	<!ENTITY samba_data_tool SYSTEM "samba_data_tool_path.xml">
+]>
+
+<refentry id="adcli">
+
+<refentryinfo>
+	<title>adcli</title>
+	<productname>realmd</productname>
+	<authorgroup>
+		<author>
+			<contrib>Maintainer</contrib>
+			<firstname>Stef</firstname>
+			<surname>Walter</surname>
+			<email>stefw@redhat.com</email>
+		</author>
+	</authorgroup>
+</refentryinfo>
+
+<refmeta>
+	<refentrytitle>adcli</refentrytitle>
+	<manvolnum>8</manvolnum>
+	<refmiscinfo class="manual">System Commands</refmiscinfo>
+</refmeta>
+
+<refnamediv>
+	<refname>adcli</refname>
+	<refpurpose>Tool for performing actions on an Active Directory domain</refpurpose>
+</refnamediv>
+
+<refsynopsisdiv>
+	<cmdsynopsis>
+		<command>adcli info</command>
+		<arg choice="plain">domain.example.com</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli join</command>
+		<arg choice="plain">domain.example.com</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli update</command>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli testjoin</command>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli create-user</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">user</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli delete-user</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">user</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli passwd-user</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">user</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli create-group</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">user</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli delete-group</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">user</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli add-member</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">group</arg>
+		<arg choice="plain" rep="repeat">user or computer</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli remove-member</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">group</arg>
+		<arg choice="plain" rep="repeat">user</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli preset-computer</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain" rep="repeat">computer</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli reset-computer</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">computer</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli delete-computer</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">computer</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli show-computer</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+		<arg choice="plain">computer</arg>
+	</cmdsynopsis>
+	<cmdsynopsis>
+		<command>adcli create-msa</command>
+		<arg choice="opt">--domain=domain.example.com</arg>
+	</cmdsynopsis>
+</refsynopsisdiv>
+
+<refsect1 id='general_overview'>
+	<title>General Overview</title>
+	<para><command>adcli</command> is a command line tool that
+	can perform actions in an Active Directory domain. Among other things
+	it can be used to join a computer to a domain.</para>
+
+	<para>See the various sub commands below. The following global options
+	can be used:</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>-D, --domain=<parameter>domain</parameter></option></term>
+			<listitem><para>The domain to connect to. If a domain is
+			not specified, then the domain part of the local computer's
+			host name is used.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-R, --domain-realm=<parameter>REALM</parameter></option></term>
+			<listitem><para>Kerberos realm for the domain. If not
+			specified, then the upper cased domain name is
+			used.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-S, --domain-controller=<parameter>server</parameter></option></term>
+			<listitem><para>Connect to a specific domain controller.
+			If not specified, then an appropriate domain controller
+			is automatically discovered.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--use-ldaps</option></term>
+			<listitem><para>Connect to the domain controller
+			with LDAPS. By default the LDAP port is used and SASL
+			GSS-SPNEGO or GSSAPI is used for authentication and to
+			establish encryption. This should satisfy all
+			requirements set on the server side and LDAPS should
+			only be used if the LDAP port is not accessible due to
+			firewalls or other reasons.</para>
+			<para> Please note that the place where CA certificates
+			can be found to validate the AD DC certificates
+			must be configured in the OpenLDAP configuration
+			file, e.g. <filename>/etc/openldap/ldap.conf</filename>.
+			As an alternative it can be specified with the help of
+			an environment variable, e.g.
+<programlisting>
+$ LDAPTLS_CACERT=/path/to/ad_dc_ca_cert.pem adcli join --use-ldaps -D domain.example.com
+...
+</programlisting>
+			Please see
+			<citerefentry><refentrytitle>ldap.conf</refentrytitle>
+			<manvolnum>5</manvolnum></citerefentry> for details.
+			</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-C</option></term>
+			<listitem><para>Use the default Kerberos credential
+			cache to authenticate with the domain.
+			</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--login-ccache<parameter>[=ccache_name]</parameter></option></term>
+			<listitem><para>Use the specified Kerberos credential
+			cache to authenticate with the domain. If no credential
+			cache is specified, the default Kerberos credential
+			cache will be used. Credential caches of type FILE can
+			be given with the path to the file. For other
+			credential cache types, e.g. DIR, KEYRING or KCM, the
+			type must be specified explicitly together with a
+			suitable identifier.</para>
+			<para>Please note that since the
+			<parameter>ccache_name</parameter> is optional the
+			=(equal) sign is mandatory. If = is missing the
+			parameter is treated as optionless extra argument. How
+			this is handled depends on the specific sub-command.
+			</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-U, --login-user=<parameter>User</parameter></option></term>
+			<listitem><para>Use the specified user account to
+			authenticate with the domain. If not specified, then
+			the name 'Administrator' will be used.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--no-password</option></term>
+			<listitem><para>Don't show prompts for or read a
+			password from input.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-W, --prompt-password</option></term>
+			<listitem><para>Prompt for a password if necessary.
+			This is the default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--stdin-password</option></term>
+			<listitem><para>Read a password from stdin input instead
+			of prompting for a password.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-v, --verbose</option></term>
+			<listitem><para>Run in verbose mode with debug
+			output.</para></listitem>
+		</varlistentry>
+	</variablelist>
+
+</refsect1>
+
+<refsect1 id='querying'>
+	<title>Querying Domain Information</title>
+
+	<para><command>adcli info</command> displays discovered information
+	about an Active Directory domain or an Active Directory domain
+	controller.</para>
+
+<programlisting>
+$ adcli info domain.example.com
+...
+</programlisting>
+
+<programlisting>
+$ adcli info --domain-controller=dc.domain.example.com
+...
+</programlisting>
+
+	<para><command>adcli info</command> will output as much information as
+	it can about the domain. The information is designed to be both machine
+	and human readable. The command will exit with a non-zero exit code
+	if the domain does not exist or cannot be reached.</para>
+
+	<para>To show domain info for a specific domain controller use the
+	<option>--domain-controller</option> option to specify which domain
+	controller to query.</para>
+
+	<para>Use the <option>--verbose</option> option to show details of how
+	the domain is discovered and queried. Many of the global options, in
+	particular authentication options, are not usable with the
+	<command>adcli info</command> command.</para>
+</refsect1>
+
+<refsect1 id='joining'>
+	<title>Joining the Local Machine to a Domain</title>
+
+	<para><command>adcli join</command> creates a computer account in the
+	domain for the local machine, and sets up a keytab for the machine.
+	It does not configure an authentication service (such as
+	<command>sssd</command>).</para>
+
+<programlisting>
+$ adcli join domain.example.com
+Password for Administrator:
+</programlisting>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>-N, --computer-name=<parameter>computer</parameter></option></term>
+			<listitem><para>The short non-dotted name of the computer
+			account that will be created in the domain. If not specified,
+			then the first portion of the <option>--host-fqdn</option>
+			is used.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-O, --domain-ou=<parameter>OU=xxx</parameter></option></term>
+			<listitem><para>The full distinguished name of the OU in
+			which to create the computer account. If not specified,
+			then the computer account will be created in a default
+			location.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-H, --host-fqdn=<parameter>host</parameter></option></term>
+			<listitem><para>Override the local machine's fully qualified
+			domain name. If not specified, the local machine's hostname
+			will be retrieved via <function>gethostname()</function>.
+			If <function>gethostname()</function> only returns a short name
+			<function>getaddrinfo()</function> with the AI_CANONNAME hint
+			is called to expand the name to a fully qualified domain
+			name.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-K, --host-keytab=<parameter>/path/to/keytab</parameter></option></term>
+			<listitem><para>Specify the path to the host keytab where
+			host credentials will be written after a successful join
+			operation. If not specified, the default location will be
+			used, usually <filename>/etc/krb5.keytab</filename>.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--login-type=<parameter>{computer|user}</parameter></option></term>
+			<listitem><para>Specify the type of authentication that
+			will be performed before creating the machine account in
+			the domain. If set to 'computer', then the computer must
+			already have a preset account in the domain. If not
+			specified and none of the other <option>--login-xxx</option>
+			arguments have been specified, then will try both
+			'computer' and 'user' authentication.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-name=<parameter>name</parameter></option></term>
+			<listitem><para>Set the operating system name on the computer
+			account. The default depends on where adcli was  built, but
+			is usually something like 'linux-gnu'.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-service-pack=<parameter>pack</parameter></option></term>
+			<listitem><para>Set the operating system service pack on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-version=<parameter>version</parameter></option></term>
+			<listitem><para>Set the operating system version on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--description=<parameter>description</parameter></option></term>
+			<listitem><para>Set the description attribute on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--service-name=<parameter>service</parameter></option></term>
+			<listitem><para>Additional service name for a Kerberos
+			principal to be created on the computer account. This
+			option may be specified multiple times.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--user-principal=<parameter>host/name@REALM</parameter></option></term>
+			<listitem><para>Set the userPrincipalName field of the
+			computer account to this Kerberos principal. If you omit
+			the value for this option, then a principal will be set
+			in the form of <code>host/host.example.com@REALM</code></para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--one-time-password</option></term>
+			<listitem><para>Specify a one time password for a preset
+			computer account. This is equivalent to using
+			<option>--login-type=computer</option> and providing a
+			password as input.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--trusted-for-delegation=<parameter>yes|no|true|false</parameter></option></term>
+			<listitem><para>Set or unset the TRUSTED_FOR_DELEGATION
+			flag in the userAccountControl attribute to allow or
+			not allow that Kerberos tickets can be forwarded to the
+			host.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--dont-expire-password=<parameter>yes|no|true|false</parameter></option></term>
+			<listitem><para>Set or unset the DONT_EXPIRE_PASSWORD
+			flag in the userAccountControl attribute to indicate if
+			the machine account password should expire or not. By
+			default adcli will set this flag while joining the
+			domain which corresponds to the default behavior of
+			Windows clients.</para>
+			<para>Please note that if the password will expire
+			(--dont-expire-password=false) a renewal mechanism has
+			to be enabled on the client to not loose the
+			connectivity to AD if the password expires.</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--add-service-principal=<parameter>service/hostname</parameter></option></term>
+			<listitem><para>Add a service principal name. In
+			contrast to the <option>--service-name</option> the
+			hostname part can be specified as well in case the
+			service should be accessible with a different host
+			name as well.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--setattr=<parameter>name=value</parameter></option></term>
+			<listitem><para>Add the LDAP attribute
+			<option><parameter>name</parameter></option> with the
+			given <option><parameter>value</parameter></option> to
+			the new LDAP host object.
+			This option can be used multiple times to add multiple
+			different attributes. Multi-value attributes are
+			currently not supported.</para>
+			<para>Please note that the account used to join the
+			domain must have the required privileges to add the
+			given attributes. Some attributes might have
+			constraints with respect to syntax and allowed values
+			which must be met as well. Attributes managed by other
+			adcli options cannot be set with this option.</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--show-details</option></term>
+			<listitem><para>After a successful join print out information
+			about join operation. This is output in a format that should
+			be both human and machine readable.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--show-password</option></term>
+			<listitem><para>After a successful join print out the computer
+			machine account password. This is output in a format that should
+			be both human and machine readable.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--add-samba-data</option></term>
+			<listitem><para>After a successful join add the domain
+			SID and the machine account password to the Samba
+			specific databases by calling Samba's
+			<command>net</command> utility.</para>
+
+			<para>Please note that Samba's <command>net</command>
+			requires some settings in <filename>smb.conf</filename>
+			to create the database entries correctly. Most
+			important here is currently the
+			<option>workgroup</option> option, see
+			<citerefentry><refentrytitle>smb.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>
+			for details.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--samba-data-tool=<parameter>/path/to/net</parameter></option></term>
+			<listitem><para>If Samba's <command>net</command>
+			cannot be found at
+			<filename>&samba_data_tool;</filename>, this option can
+			be used to specific an alternative location with the
+			help of an absolute path.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--ldap-passwd</option></term>
+			<listitem><para>Use LDAP add/mod operations to set the
+			machine account password instead of Kerberos. This
+			might help in some situations where Kerberos fails or
+			is unreliable. But please note that 'Change password'
+			or 'Reset password' permissions or similar might be
+			needed to make the LDAP operation work. Additionally
+			there will be no read-only domain controller (RODC)
+			support as there is with Kerberos.</para></listitem>
+		</varlistentry>
+	</variablelist>
+
+	<para>If supported on the AD side the
+	<option>msDS-supportedEncryptionTypes</option> attribute will be set as
+	well. Either the current value or the default list of AD's supported
+	encryption types filtered by the permitted encryption types of the
+	client's Kerberos configuration are written.</para>
+</refsect1>
+
+<refsect1 id='updating'>
+	<title>Updating the machine account password and other attributes</title>
+
+	<para><command>adcli update</command> updates the password of the computer
+	account on the domain controller for the local machine, write the new
+	keys to the keytab and removes older keys. It keeps the previous key on purpose
+	because AD will need some time to replicate the new key to all DCs hence the
+	previous key might still be used.
+	</para>
+
+<programlisting>
+$ adcli update
+</programlisting>
+
+	<para>If used with a credential cache, other attributes of the computer
+	account can be changed as well if the principal has sufficient
+	privileges.</para>
+
+<programlisting>
+$ kinit Administrator
+$ adcli update --login-ccache=/tmp/krbcc_123
+</programlisting>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>-N, --computer-name=<parameter>computer</parameter></option></term>
+			<listitem><para>The short non-dotted name of the computer
+			account that will be created in the domain. If not specified,
+			it will be retrieved from the keytab entries.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-H, --host-fqdn=<parameter>host</parameter></option></term>
+			<listitem><para>The local machine's fully qualified
+			domain name. If not specified, the local machine's hostname
+			will be retrieved from the keytab entries.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-K, --host-keytab=<parameter>/path/to/keytab</parameter></option></term>
+			<listitem><para>Specify the path to the host keytab where
+			current host credentials are stored and the new ones
+			will be written to.  If not specified, the default
+			location will be used, usually
+			<filename>/etc/krb5.keytab</filename>.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-name=<parameter>name</parameter></option></term>
+			<listitem><para>Set the operating system name on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-service-pack=<parameter>pack</parameter></option></term>
+			<listitem><para>Set the operating system service pack on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-version=<parameter>version</parameter></option></term>
+			<listitem><para>Set the operating system version on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--description=<parameter>description</parameter></option></term>
+			<listitem><para>Set the description attribute on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--service-name=<parameter>service</parameter></option></term>
+			<listitem><para>Additional service name for a Kerberos
+			principal to be created on the computer account. This
+			option may be specified multiple times.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--user-principal=<parameter>host/name@REALM</parameter></option></term>
+			<listitem><para>Set the userPrincipalName field of the
+			computer account to this Kerberos principal.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--computer-password-lifetime=<parameter>lifetime</parameter></option></term>
+			<listitem><para>Only update the password of the
+			computer account if it is older than the lifetime given
+			in days. By default the password is updated if it is
+			older than 30 days.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--trusted-for-delegation=<parameter>yes|no|true|false</parameter></option></term>
+			<listitem><para>Set or unset the TRUSTED_FOR_DELEGATION
+			flag in the userAccountControl attribute to allow or
+			not allow that Kerberos tickets can be forwarded to the
+			host.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--dont-expire-password=<parameter>yes|no|true|false</parameter></option></term>
+			<listitem><para>Set or unset the DONT_EXPIRE_PASSWORD
+			flag in the userAccountControl attribute to indicate if
+			the machine account password should expire or not. By
+			default adcli will set this flag while joining the
+			domain which corresponds to the default behavior of
+			Windows clients.</para>
+			<para>Please note that if the password will expire
+			(--dont-expire-password=false) a renewal mechanism has
+			to be enabled on the client to not loose the
+			connectivity to AD if the password expires.</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--account-disable=<parameter>yes|no|true|false</parameter></option></term>
+			<listitem><para>Set or unset the ACCOUNTDISABLE
+			flag in the userAccountControl attribute to disable or
+			enable the computer account.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--add-service-principal=<parameter>service/hostname</parameter></option></term>
+			<listitem><para>Add a service principal name. In
+			contrast to the <option>--service-name</option> the
+			hostname part can be specified as well in case the
+			service should be accessible with a different host
+			name as well.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--remove-service-principal=<parameter>service/hostname</parameter></option></term>
+			<listitem><para>Remove a service principal name from
+			the keytab and the AD host object.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--setattr=<parameter>name=value</parameter></option></term>
+			<listitem><para>Add the LDAP attribute
+			<option><parameter>name</parameter></option> with the
+			given <option><parameter>value</parameter></option> to
+			the LDAP host object.
+			This option can be used multiple times to add multiple
+			different attributes. Multi-value attributes are
+			currently not supported.</para>
+			<para>Please note that the account used to update the
+			host object must have the required privileges to modify
+			the given attributes. Some attributes might have
+			constraints with respect to syntax and allowed values
+			which must be met as well. Attributes managed by other
+			adcli options cannot be set with this option.</para>
+			</listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--delattr=<parameter>name</parameter></option></term>
+			<listitem><para>Remove the LDAP attribute
+			<option><parameter>name</parameter></option> from the
+			LDAP host object. This option can be used multiple
+			times to remove multiple different attributes.</para>
+			<para>Please note that the account used to update the
+			host object must have the required privileges to delete
+			the given attributes. Attributes managed by other adcli
+			options cannot be removed.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--show-details</option></term>
+			<listitem><para>After a successful join print out information
+			about join operation. This is output in a format that should
+			be both human and machine readable.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--add-samba-data</option></term>
+			<listitem><para>After a successful join add the domain
+			SID and the machine account password to the Samba
+			specific databases by calling Samba's
+			<command>net</command> utility.</para>
+
+			<para>Please note that Samba's <command>net</command>
+			requires some settings in <filename>smb.conf</filename>
+			to create the database entries correctly. Most
+			important here is currently the
+			<option>workgroup</option> option, see
+			<citerefentry><refentrytitle>smb.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>
+			for details.</para>
+			<para>Note that if the machine account password is not
+			older than 30 days, you have to pass
+			<option>--computer-password-lifetime=0</option> to
+			force the update.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--samba-data-tool=<parameter>/path/to/net</parameter></option></term>
+			<listitem><para>If Samba's <command>net</command>
+			cannot be found at
+			<filename>&samba_data_tool;</filename>, this option can
+			be used to specific an alternative location with the
+			help of an absolute path.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--ldap-passwd</option></term>
+			<listitem><para>Use LDAP add/mod operations to set the
+			machine account password instead of Kerberos. This
+			might help in some situations where Kerberos fails or
+			is unreliable. But please note that 'Change password'
+			or 'Rest password' permissions or similar might be
+			needed to make the LDAP operation work. Additionally
+			there will be no read-only domain controller (RODC)
+			support as there is with Kerberos.</para></listitem>
+		</varlistentry>
+	</variablelist>
+
+	<para>If supported on the AD side the
+	<option>msDS-supportedEncryptionTypes</option> attribute will be set as
+	well. Either the current value or the default list of AD's supported
+	encryption types filtered by the permitted encryption types of the
+	client's Kerberos configuration are written.</para>
+</refsect1>
+
+<refsect1 id='testjoin'>
+	<title>Testing if the machine account password is valid</title>
+
+	<para><command>adcli testjoin</command> uses the current credentials in
+	the keytab and tries to authenticate with the machine account to the AD
+	domain. If this works the machine account password and the join are
+	still valid. If it fails the machine account password or the whole
+	machine account have to be refreshed with
+	<command>adcli join</command> or <command>adcli update</command>.
+	</para>
+
+<programlisting>
+$ adcli testjoin
+</programlisting>
+
+	<para>Only the global options not related to authentication are
+	available, additionally you can specify the following options to
+	control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>-K, --host-keytab=<parameter>/path/to/keytab</parameter></option></term>
+			<listitem><para>Specify the path to the host keytab where
+			current host credentials are stored and the new ones
+			will be written to.  If not specified, the default
+			location will be used, usually
+			<filename>/etc/krb5.keytab</filename>.</para></listitem>
+		</varlistentry>
+	</variablelist>
+</refsect1>
+
+<refsect1 id='create_user'>
+	<title>Creating a User</title>
+
+	<para><command>adcli create-user</command> creates a new user account
+	in the domain.</para>
+
+<programlisting>
+$ adcli create-user Fry --domain=domain.example.com \
+	--display-name="Philip J. Fry" --mail=fry@domain.example.com
+</programlisting>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how the user is created.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>--display-name=<parameter>"Name"</parameter></option></term>
+			<listitem><para>Set the <code>displayName</code> attribute
+			of the new created user account.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-O, --domain-ou=<parameter>OU=xxx</parameter></option></term>
+			<listitem><para>The full distinguished name of the OU in
+			which to create the user account. If not specified,
+			then the computer account will be created in a default
+			location.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--mail=<parameter>email@domain.com</parameter></option></term>
+			<listitem><para>Set the <code>mail</code> attribute of
+			the new created user account. This attribute may be
+			specified multiple times.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--unix-home=<parameter>/home/user</parameter></option></term>
+			<listitem><para>Set the <code>unixHomeDirectory</code> attribute of
+			the new created user account, which should be an absolute
+			path to the user's home directory.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--unix-gid=<parameter>111</parameter></option></term>
+			<listitem><para>Set the <code>gidNumber</code> attribute of
+			the new created user account, which should be the user's
+			numeric primary group id.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--unix-shell=<parameter>/bin/shell</parameter></option></term>
+			<listitem><para>Set the <code>loginShell</code> attribute of
+			the new created user account, which should be a path to
+			a valid shell.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--unix-uid=<parameter>111</parameter></option></term>
+			<listitem><para>Set the <code>uidNumber</code> attribute of
+			the new created user account, which should be the user's
+			numeric primary user id.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--nis-domain=<parameter>nis_domain</parameter></option></term>
+			<listitem><para>Set the <code>msSFU30NisDomain</code> attribute of
+			the new created user account, which should be the user's
+			NIS domain is the NIS/YP service of Active Directory's Services for Unix (SFU)
+			are used. This is needed to let the 'UNIX attributes' tab of older Active
+			Directory versions show the set UNIX specific attributes. If not specified
+			adcli will try to determine the NIS domain automatically if needed.
+			</para></listitem>
+		</varlistentry>
+	</variablelist>
+
+</refsect1>
+
+<refsect1 id='delete_user'>
+	<title>Deleting a User</title>
+
+	<para><command>adcli delete-user</command> deletes a user account from
+	the domain.</para>
+
+<programlisting>
+$ adcli delete-user Fry --domain=domain.example.com
+</programlisting>
+
+	<para>The various global options can be used.</para>
+
+</refsect1>
+
+<refsect1 id='passwd_user'>
+	<title>(Re)setting the password of a User with an Administrative Account</title>
+
+	<para><command>adcli passwd-user</command> sets or resets the password
+	of user account. The administrative account used for this operation
+	must have privileges to set a password.</para>
+
+<programlisting>
+$ adcli passwd-user Fry --domain=domain.example.com
+</programlisting>
+
+	<para>The various global options can be used.</para>
+
+</refsect1>
+
+
+<refsect1 id='create_group'>
+	<title>Creating a Group</title>
+
+	<para><command>adcli create-group</command> creates a new group in the
+	domain.</para>
+
+<programlisting>
+$ adcli create-group Pilots --domain=domain.example.com \
+	--description="Group for all pilots"
+</programlisting>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how the group is created.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>--description=<parameter>"text"</parameter></option></term>
+			<listitem><para>Set the <code>description</code> attribute
+			of the new created group.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-O, --domain-ou=<parameter>OU=xxx</parameter></option></term>
+			<listitem><para>The full distinguished name of the OU in
+			which to create the group. If not specified,
+			then the group will be created in a default
+			location.</para></listitem>
+		</varlistentry>
+	</variablelist>
+
+</refsect1>
+
+<refsect1 id='delete_group'>
+	<title>Deleting a Group</title>
+
+	<para><command>adcli delete-group</command> deletes a group from
+	the domain.</para>
+
+<programlisting>
+$ adcli delete-group Pilots --domain=domain.example.com
+</programlisting>
+
+	<para>The various global options can be used.</para>
+
+</refsect1>
+
+<refsect1 id='add_group_member'>
+	<title>Adding a Member to a Group</title>
+
+	<para><command>adcli add-member</command> adds one or more users to a
+	group in the domain. The group is specified first, and then the various
+	users or computers to be added.
+	You must use dollar sign for computer account (computername$)</para>
+
+<programlisting>
+$ adcli add-member --domain=domain.example.com Pilots Leela Scruffy
+$ adcli add-member --domain=domain.example.com servers srv-smb$
+</programlisting>
+
+	<para>The various global options can be used.</para>
+
+	<para></para>
+
+</refsect1>
+
+<refsect1 id='remove_group_member'>
+	<title>Removing a Member from a Group</title>
+
+	<para><command>adcli remove-member</command> removes a user from  a group
+	in the domain. The group is specified first, and then the various users
+	to be removed.</para>
+
+<programlisting>
+$ adcli remove-member --domain=domain.example.com Pilots Scruffy
+</programlisting>
+
+	<para>The various global options can be used.</para>
+
+</refsect1>
+
+<refsect1 id='preset_computer_account'>
+	<title>Preset Computer Accounts</title>
+
+	<para><command>adcli preset-computer</command> pre-creates one or more
+	computer accounts in the domain for machines to later use when joining
+	the domain. By doing this machines can join using a one time password
+	or automatically without a password.</para>
+
+<programlisting>
+$ adcli preset-computer --domain=domain.example.com \
+	host1.example.com host2
+Password for Administrator:
+</programlisting>
+
+	<para>If the computer names specified contain dots, then they are
+	treated as fully qualified host names, otherwise they are treated
+	as short computer names. The computer accounts must not already
+	exist.</para>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>-O, --domain-ou=<parameter>OU=xxx</parameter></option></term>
+			<listitem><para>The full distinguished name of the OU in
+			which to create the computer accounts. If not specified,
+			then the computer account will be created in a default
+			location.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--one-time-password</option></term>
+			<listitem><para>Specify a one time password to use when
+			presetting the computer accounts. If not specified, then
+			a default password will be used, which allows for later
+			automatic joins.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-name=<parameter>name</parameter></option></term>
+			<listitem><para>Set the operating system name on the computer
+			account. The default depends on where adcli was  built, but
+			is usually something like 'linux-gnu'.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-service-pack=<parameter>pack</parameter></option></term>
+			<listitem><para>Set the operating system service pack on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--os-version=<parameter>version</parameter></option></term>
+			<listitem><para>Set the operating system version on the computer
+			account. Not set by default.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--service-name=<parameter>service</parameter></option></term>
+			<listitem><para>Additional service name for a Kerberos
+			principal to be created on the computer account. This
+			option may be specified multiple times.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--user-principal</option></term>
+			<listitem><para>Set the userPrincipalName field of the
+			computer account to this Kerberos principal in the form
+			of <code>host/host.example.com@REALM</code></para></listitem>
+		</varlistentry>
+	</variablelist>
+
+</refsect1>
+
+<refsect1 id='reset_computer_account'>
+	<title>Reset Computer Account</title>
+
+	<para><command>adcli reset-computer</command> resets a computer account
+	in the domain. If the appropriate machine is currently joined to the
+	domain, then its membership will be broken. The account must already
+	exist.</para>
+
+<programlisting>
+$ adcli reset-computer --domain=domain.example.com host2
+</programlisting>
+
+	<para>If the computer names specified contain dots, then they are
+	treated as fully qualified host names, otherwise they are treated
+	as short computer names.</para>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>--login-type=<parameter>{computer|user}</parameter></option></term>
+			<listitem><para>Specify the type of authentication that
+			will be performed before creating the machine account in
+			the domain. If set to 'computer', then the computer must
+			already have a preset account in the domain. If not
+			specified and none of the other <option>--login-xxx</option>
+			arguments have been specified, then will try both
+			'computer' and 'user' authentication.</para></listitem>
+		</varlistentry>
+	</variablelist>
+
+</refsect1>
+
+<refsect1 id='delete_computer_account'>
+	<title>Delete Computer Account</title>
+
+	<para><command>adcli delete-computer</command> deletes a computer account
+	in the domain. The account must already exist.</para>
+
+<programlisting>
+$ adcli delete-computer --domain=domain.example.com host2
+Password for Administrator:
+</programlisting>
+
+	<para>If the computer name contains a dot, then it is
+	treated as fully qualified host name, otherwise it is treated
+	as short computer name.</para>
+
+	<para>If no computer name is specified, then the host name of the
+	computer adcli is running on is used, as returned by
+	<literal>gethostname()</literal>.</para>
+
+	<para>The various global options can be used.</para>
+
+</refsect1>
+
+<refsect1 id='show_computer_account'>
+	<title>Show Computer Account Attributes</title>
+
+	<para><command>adcli show-computer</command> show the computer account
+	attributes stored in AD. The account must already exist.</para>
+
+<programlisting>
+$ adcli show-computer --domain=domain.example.com host2
+Password for Administrator:
+</programlisting>
+
+	<para>If the computer name contains a dot, then it is
+	treated as fully qualified host name, otherwise it is treated
+	as short computer name.</para>
+
+	<para>If no computer name is specified, then the host name of the
+	computer adcli is running on is used, as returned by
+	<literal>gethostname()</literal>.</para>
+
+	<para>The various global options can be used.</para>
+
+</refsect1>
+
+<refsect1 id='managed_service_account'>
+	<title>Create a managed service account</title>
+
+	<para><command>adcli create-msa</command> creates a managed service
+	account (MSA) in the given Active Directory domain. This is useful if a
+	computer should not fully join the Active Directory domain but LDAP
+	access is needed. A typical use case is that the computer is already
+	joined an Active Directory domain and needs access to another Active
+	Directory domain in the same or a trusted forest where the host
+	credentials from the joined Active Directory domain are
+	not valid, e.g. there is only a one-way trust.</para>
+
+<programlisting>
+$ adcli create-msa --domain=domain.example.com
+Password for Administrator:
+</programlisting>
+
+	<para>The managed service account, as maintained by adcli, cannot have
+	additional service principals names (SPNs) associated with it. An SPN
+	is defined within the context of a Kerberos service which is tied to a
+	machine account in Active Directory. Since a machine can be joined to a
+	single Active Directory domain, managed service account in a different
+	Active Directory domain will not have the SPNs that otherwise are part
+	of another Active Directory domain's machine.</para>
+
+	<para>Since it is expected that a client will most probably join to the
+	Active Directory domain matching its DNS domain the managed service
+	account will be needed for a different Active Directory domain and as a
+	result the Active Directory domain name is a mandatory option. If
+	called with no other options <command>adcli create-msa</command>
+	will use the short hostname with an additional random suffix as
+	computer name to avoid name collisions.</para>
+
+	<para>LDAP attribute sAMAccountName has a limit of 20 characters.
+	However, machine account's NetBIOS name must be at most 16 characters
+	long, including a trailing '$' sign. Since it is not expected that the
+	managed service accounts created by adcli will be used on the NetBIOS
+	level the remaining 4 characters can be used to add uniqueness. Managed
+	service account names will have a suffix of 3 random characters from
+	number and upper- and lowercase ASCII ranges appended to the chosen
+	short host name, using '!' as a separator. For a host with the
+	shortname 'myhost', a managed service account will have a common name
+	(CN attribute) 'myhost!A2c' and a NetBIOS name
+	(sAMAccountName attribute) will be 'myhost!A2c$'. A corresponding
+	Kerberos principal in the Active Directory domain where the managed
+	service account was created would be
+	'myhost!A2c$@DOMAIN.EXAMPLE.COM'.</para>
+
+	<para>A keytab for the managed service account is stored into a file
+	specified with -K option. If it is not specified, the file is named
+	after the default keytab file, with lowercase Active Directory domain
+	of the managed service account as a suffix. On most systems it would be
+	<filename>/etc/krb5.keytab</filename> with a suffix of
+	'domain.example.com', e.g.
+	<filename>/etc/krb5.keytab.domain.example.com</filename>.</para>
+
+	<para><command>adcli create-msa</command> can be called multiple
+	times to reset the password of the managed service account. To identify
+	the right account with the random component in the name the
+	corresponding principal is read from the keytab. If the keytab got
+	deleted <command>adcli</command> will try to identify an existing
+	managed service account with the help of the fully-qualified name, if
+	this fails a new managed service account will be created.</para>
+
+	<para>The managed service account password can be updated with
+<programlisting>
+$ adcli update --domain=domain.example.com --host-keytab=/etc/krb5.keytab.domain.example.com
+</programlisting>
+	and the managed service account can be deleted with
+<programlisting>
+$ adcli delete-computer --domain=domain.example.com 'myhost!A2c'
+</programlisting>
+	</para>
+
+	<para>In addition to the global options, you can specify the following
+	options to control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>-N, --computer-name=<parameter>computer</parameter></option></term>
+			<listitem><para>The short non-dotted name of the managed
+			service account that will be created in the Active
+			Directory domain. The long option name
+			<option>--computer-name</option> is
+			kept to underline the similarity with the same option
+			of the other sub-commands. If not specified,
+			then the first portion of the <option>--host-fqdn</option>
+			or its default is used with a random suffix.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-O, --domain-ou=<parameter>OU=xxx</parameter></option></term>
+			<listitem><para>The full distinguished name of the OU in
+			which to create the managed service account. If not
+			specified, then the managed service account will be
+			created in a default location.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-H, --host-fqdn=<parameter>host</parameter></option></term>
+			<listitem><para>Override the local machine's fully
+			qualified DNS domain name. If not specified, the local
+			machine's hostname will be retrieved via
+			<function>gethostname()</function>.
+			If <function>gethostname()</function> only returns a short name
+			<function>getaddrinfo()</function> with the AI_CANONNAME hint
+			is called to expand the name to a fully qualified DNS
+			domain name.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>-K, --host-keytab=<parameter>/path/to/keytab</parameter></option></term>
+			<listitem><para>Specify the path to the host keytab where
+			credentials of the managed service account will be
+			written after a successful creation. If not specified,
+			the default location will be used, usually
+			<filename>/etc/krb5.keytab</filename> with
+			the lower-cased Active Directory domain name added as a
+			suffix e.g.
+			<filename>/etc/krb5.keytab.domain.example.com</filename>.
+			</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--show-details</option></term>
+			<listitem><para>After a successful creation print out
+			information about the created object. This is output in
+			a format that should be both human and machine
+			readable.</para></listitem>
+		</varlistentry>
+		<varlistentry>
+			<term><option>--show-password</option></term>
+			<listitem><para>After a successful creation print out
+			the managed service account password. This is output in
+			a format that should be both human and machine
+			readable.</para></listitem>
+		</varlistentry>
+	</variablelist>
+</refsect1>
+
+<refsect1 id='delegation'>
+	<title>Delegated Permissions</title>
+	<para>It is common practice in AD to not use an account from the Domain
+	Administrators group to join a machine to a domain but use a dedicated
+	account which only has permissions to join a machine to one or more OUs
+	in the Active Directory tree. Giving the needed permissions to a single
+	account or a group in Active Directory is called Delegation. A typical
+	example on how to configured Delegation can be found in the Delegation
+	section of the blog post
+	<ulink url="https://docs.microsoft.com/en-us/archive/blogs/dubaisec/who-can-add-workstation-to-the-domain">Who can add workstation to the domain</ulink>.
+	</para>
+
+	<para>When using an account with delegated permissions with adcli
+	basically the same applies as well. However some aspects are explained
+	here in a bit more details to better illustrate different concepts of
+	Active Directory and to make it more easy to debug permissions issues
+	during the join. Please note that the following is not specific to
+	adcli but applies to all applications which would like to modify
+	certain properties or objects in Active Directory with an account with
+	limited permissions.</para>
+
+	<para>First, as said in the blog post it is sufficient to have
+	<literal>"Create computer object"</literal> permissions to join a
+	computer to a domain. But this would only work as expected if the
+	computer object does not exist in Active Directory before the join.
+	Because only when a new object is created Active Directory does not
+	apply additional permission checks on the attributes of the new
+	computer object. This means the delegated user can add any kind of
+	attribute with any value to a new computer object also long as they
+	meet general constraints like e.g. that the attribute must be defined
+	in the schema and is allowed in a objectclass of the object, the value
+	must match the syntax defined in the schema or that the
+	<option>sAMAccountName</option> must be unique in the domain.</para>
+
+	<para>If you want to use the account with delegated permission to
+	remove computer objects in Active Directory (adcli delete-computer) you
+	should of course make sure that the account has
+	<literal>"Delete computer object"</literal> permissions.</para>
+
+	<para>If the computer object already exists the
+	<literal>"Create computer object"</literal> permission does not apply
+	anymore since now an existing object must be modified. Now permissions
+	on the individual attributes are needed. e.g.
+	<literal>"Read and write Account Restrictions"</literal> or
+	<literal>"Reset Password"</literal>. For some attributes Active
+	Directory has two types of permissions the plain
+	<literal>"Read and Write"</literal> permissions and the
+	<literal>"Validated Write"</literal> permissions. For the latter case
+	there are two specific permissions relevant for adcli, namely
+		<itemizedlist>
+			<listitem><para>Validated write to DNS host name</para></listitem>
+			<listitem><para>Validated write to service principal name</para></listitem>
+		</itemizedlist>
+	Details about the validation of the values can be found in the
+	<literal>"Validated Writes"</literal> section of
+	<literal>[MS-ADTS]</literal>, especially
+	<ulink url="https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/5c578b15-d619-408d-ba17-380714b89fd1">dNSHostName</ulink>
+	and
+	<ulink url="https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/28ca4eca-0e0b-4666-9175-a37ccb8edada">servicePrincipalName</ulink>.
+	To cut it short for <literal>"Validated write to DNS host name"</literal>
+	the domain part of the fully-qualified hostname must either match the
+	domain name of the domain you want to join to or must be listed in the
+	<option>msDS-AllowedDNSSuffixes</option> attribute. And for
+	<literal>"Validated write to service principal name"</literal> the
+	hostname part of the service principal name must match the name stored
+	in <option>dNSHostName</option> or some other attributes which are
+	not handled by adcli. This also means that
+	<option>dNSHostName</option> cannot be empty or only contain a short
+	name if the service principal name should contain a fully-qualified
+	name.</para>
+
+	<para>To summarize, if you only have validated write permissions you
+	should make sure the domain part of the hostname matches the domain you
+	want to join or use the <option>--host-fqdn</option> with a matching
+	name.</para>
+
+	<para>The plain read write permissions do not run additional
+	validations but the attribute values must still be in agreement with
+	the general constraints mentioned above. If the computer object already
+	exists adcli might need the following permissions which are also needed
+	by Windows clients to modify existing attributes:
+		<itemizedlist>
+			<listitem><para>Reset Password</para></listitem>
+			<listitem><para>Read and write Account Restrictions</para></listitem>
+			<listitem><para>Read and (validated) write to DNS host name</para></listitem>
+			<listitem><para>Read and (validated) write to service principal name</para></listitem>
+		</itemizedlist>
+	additionally adcli needs
+		<itemizedlist>
+			<listitem><para>Read and write msDS-supportedEncryptionTypes</para></listitem>
+		</itemizedlist>
+	This is added for security reasons to avoid that Active Directory
+	stores Kerberos keys with (potentially weaker) encryption types than
+	the client supports since Active Directory is often configured to still
+	support older (weaker) encryption types for compatibility reasons.
+	</para>
+
+	<para>All other attributes are only set or modified on demand, i.e.
+	adcli must be called with an option the would set or modify the given
+	attribute. In the following the attributes adcli can modify together
+	with the required permissions are listed:
+	<xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="permissions.xml" />
+	</para>
+
+	<para>For the management of users and groups (adcli create-user,
+	adcli delete-user, adcli create-group, adcli delete-group) the same
+	applies only for different types of objects, i.e. users and groups.
+	Since currently adcli only supports the creation and the removal of
+	user and group objects it is sufficient to have the
+	<literal>"Create/Delete User objects"</literal> and
+	<literal>"Create/Delete Group objects"</literal> permissions.</para>
+
+	<para>If you want to manage group members as well (adcli add-member,
+	adcli remove-member) <literal>"Read/Write Members"</literal> permissions
+	are needed as well.</para>
+
+	<para>Depending on the version of Active Directory the
+	<literal>"Delegation of Control Wizard"</literal> might offer some
+	shortcuts for common task like e.g.
+		<itemizedlist>
+			<listitem><para>Create, delete and manage user accounts</para></listitem>
+			<listitem><para>Create, delete and manage groups</para></listitem>
+			<listitem><para>Modify the membership of a group</para></listitem>
+		</itemizedlist>
+	The first 2 shortcuts will provided full access to user and group
+	objects which, as explained above, is more than currently is needed.
+	After using those shortcut it is a good idea to verify in the
+	<literal>"Security"</literal> tab in the <literal>"Properties"</literal>
+	of the related Active Directory container that the assigned permissions
+	meet the expectations.</para>
+</refsect1>
+
+<refsect1 id='bugs'>
+	<title>Bugs</title>
+	<para>
+		Please send bug reports to either the distribution bug tracker
+		or the upstream bug tracker at
+		<ulink url="https://bugs.freedesktop.org/enter_bug.cgi?product=realmd&amp;component=adcli">https://bugs.freedesktop.org/enter_bug.cgi?product=realmd&amp;component=adcli</ulink>
+	</para>
+</refsect1>
+
+<refsect1 id='see_also'>
+	<title>See also</title>
+	<simplelist type="inline">
+		<member><citerefentry><refentrytitle>realmd</refentrytitle><manvolnum>8</manvolnum></citerefentry></member>
+		<member><citerefentry><refentrytitle>net</refentrytitle><manvolnum>8</manvolnum></citerefentry></member>
+		<member><citerefentry><refentrytitle>sssd</refentrytitle><manvolnum>8</manvolnum></citerefentry></member>
+	</simplelist>
+	<para>
+		Further details available in the realmd online documentation at
+		<ulink url="http://www.freedesktop.org/software/realmd/">http://www.freedesktop.org/software/realmd/</ulink>
+	</para>
+</refsect1>
+
+</refentry>
