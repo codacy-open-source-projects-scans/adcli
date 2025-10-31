@@ -1,0 +1,3 @@
+# Set SELinux file context krb5_keytab_t for keytab files in /etc and /etc/sssd
+/etc/krb5\.keytab\..*		system_u:object_r:krb5_keytab_t:s0
+/etc/sssd/krb5\.keytab\..*	system_u:object_r:krb5_keytab_t:s0
