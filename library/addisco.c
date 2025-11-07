@@ -336,13 +336,74 @@ get_32_le (unsigned char **at,
 }
 
 static int
-skip_n (unsigned char **at,
-        unsigned char *end,
-        int n)
+get_16_le (unsigned char **at,
+           unsigned char *end,
+           uint16_t *val)
 {
-	if (end - (*at) < n)
+	unsigned char *p = *at;
+	if (end - p < 2)
 		return 0;
-	(*at) += n;
+	*val = p[0] | p[1] << 8;
+	(*at) += 2;
+	return 1;
+}
+
+struct GUID {
+	uint32_t time_low;
+	uint16_t time_mid;
+	uint16_t time_hi_and_version;
+	uint8_t clock_seq[2];
+	uint8_t node[6];
+};
+
+/* Format is "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x" */
+/* 32 chars + 4 ' ' + \0 + 2 for adding {}  */
+struct GUID_txt_buf {
+	char buf[39];
+};
+
+static char *GUID_buf_string(const struct GUID *guid,
+			     struct GUID_txt_buf *dst)
+{
+	if (guid == NULL) {
+		return NULL;
+	}
+	snprintf(dst->buf, sizeof(dst->buf),
+		 "%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x",
+		 guid->time_low, guid->time_mid,
+		 guid->time_hi_and_version,
+		 guid->clock_seq[0],
+		 guid->clock_seq[1],
+		 guid->node[0], guid->node[1],
+		 guid->node[2], guid->node[3],
+		 guid->node[4], guid->node[5]);
+	return dst->buf;
+}
+
+static int
+parse_guid (unsigned char **at,
+	    unsigned char *end,
+	    char **result)
+{
+	struct GUID g = { 0 };
+	struct GUID_txt_buf buf;
+
+	if (end - (*at) < sizeof(struct GUID)) {
+		return 0;
+	}
+
+	get_32_le(at, end, &g.time_low);
+	get_16_le(at, end, &g.time_mid);
+	get_16_le(at, end, &g.time_hi_and_version);
+
+	memcpy(&g.clock_seq, *at, sizeof(g.clock_seq));
+	(*at) += sizeof(g.clock_seq);
+
+	memcpy(&g.node, *at, sizeof(g.node));
+	(*at) += sizeof(g.node);
+
+	*result = strdup(GUID_buf_string(&g, &buf));
+
 	return 1;
 }
 
@@ -364,7 +425,7 @@ parse_disco_data (struct berval *bv)
 	/* domain forest */
 	if (!get_32_le (&at, end, &type) || type != 23 ||
 	    !get_32_le (&at, end, &disco->flags) ||
-	    !skip_n (&at, end, 16) || /* guid */
+	    !parse_guid (&at, end, &disco->domain_guid) ||
 	    !parse_disco_string (beg, end, &at, &disco->forest) ||
 	    !parse_disco_string (beg, end, &at, &disco->domain) ||
 	    !parse_disco_string (beg, end, &at, &disco->host_name) ||
@@ -1005,6 +1066,7 @@ adcli_disco_free (adcli_disco *disco)
 		free (disco->host_addr);
 		free (disco->host_name);
 		free (disco->host_short);
+		free (disco->domain_guid);
 		free (disco->forest);
 		free (disco->domain);
 		free (disco->domain_short);

@@ -399,14 +399,24 @@ setup_krb5_conf_directory (adcli_conn *conn)
 			warnx ("couldn't create temporary directory in: %s: %s",
 			       parent, strerror (errn));
 		} else {
-			if (asprintf (&filename, "%s/krb5.conf", directory) < 0 ||
-			    asprintf (&snippets, "%s/krb5.d", directory) < 0 ||
-			    asprintf (&contents, "includedir %s\n%s%s\n", snippets,
-			              krb5_conf ? "include " : "",
-			              krb5_conf ? krb5_conf : "") < 0) {
+			if (asprintf (&filename, "%s/krb5.conf", directory) < 0) {
 				warnx ("unexpected: out of memory");
-				filename = NULL; /* content is undefined */
-				snippets = NULL; /* content is undefined */
+				failed = 1;
+			}
+			if (!failed && asprintf (&snippets, "%s/krb5.d", directory) < 0) {
+				free (filename);
+				filename = NULL;
+				warnx ("unexpected: out of memory");
+				failed = 1;
+			}
+			if (!failed && asprintf (&contents, "includedir %s\n%s%s\n", snippets,
+			                         krb5_conf ? "include " : "",
+			                         krb5_conf ? krb5_conf : "") < 0) {
+				free (snippets);
+				snippets = NULL;
+				free (filename);
+				filename = NULL;
+				warnx ("unexpected: out of memory");
 				contents = NULL; /* content is undefined */
 				failed = 1;
 			}

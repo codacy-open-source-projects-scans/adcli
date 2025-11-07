@@ -96,6 +96,12 @@ AC_SUBST(LDAP_LIBS)
 AC_SUBST(LDAP_CFLAGS)
 
 # -------------------------------------------------------------------
+# samba
+
+AC_CHECK_LIB([netapi], [NetComposeOfflineDomainJoin],
+	     [AC_DEFINE(SAMBA_NETAPI_HAS_COMPOSEODJ, 1, [Samba NetApi supports composeodj])])
+
+# -------------------------------------------------------------------
 # resolv
 
 AC_MSG_CHECKING([for which library has res_query, ns_get16 and ns_get32])
@@ -124,6 +130,29 @@ AC_CHECK_HEADERS([sasl/sasl.h], , [sasl_invalid=yes])
 if test "$sasl_invalid" = "yes"; then
 	AC_MSG_ERROR([Couldn't find Cyrus SASL headers])
 fi
+
+# --------------------------------------------------------------------
+# libselinux
+AC_SUBST(LIBSELINUX_LIBS)
+AC_SUBST(LIBSELINUX_CFLAGS)
+
+PKG_CHECK_MODULES([LIBSELINUX], [libselinux], [found_libselinux=yes], [found_libselinux=no])
+
+# --------------------------------------------------------------------
+# selinux-policy
+SELINUX_MAKEFILE=/usr/share/selinux/devel/Makefile
+AC_SUBST([SELINUX_MAKEFILE])
+
+AC_CHECK_FILE([$SELINUX_MAKEFILE],
+              [build_selinux=yes],
+              [build_selinux=no])
+
+AM_CONDITIONAL(BUILD_SELINUX_POLICY, test x$build_selinux = xyes && test x$found_libselinux = xyes)
+
+if test x$build_selinux = xyes && test x$found_libselinux = xyes; then
+    AC_DEFINE(BUILD_SELINUX_POLICY, 1, [whether to build with SELinux support])
+fi
+
 
 # --------------------------------------------------------------------
 # Vendor error message
@@ -332,6 +361,7 @@ AC_CONFIG_FILES([Makefile
 	doc/samba_data_tool_path.xml
 	library/Makefile
 	tools/Makefile
+	selinux/Makefile
 ])
 AC_OUTPUT
 

@@ -3,6 +3,7 @@ include $(top_srcdir)/Makefile.decl
 SUBDIRS = \
 	build \
 	library \
+	selinux \
 	tools
 
 ACLOCAL_AMFLAGS = -I build/m4

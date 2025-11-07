@@ -43,12 +43,17 @@
 				<listitem><para>MIT Kerberos libraries</para></listitem>
 			</itemizedlist>
 
+			<para>If Samba's offline join feature should be used the
+			<literal>libnetapi</literal> development package should be install as well
+			so that <literal>configure</literal> can detect if the used Samba version
+			already supports offline joins.</para>
+
 			<para>On <emphasis role="strong">Debian</emphasis> or <emphasis role="strong">Ubuntu</emphasis> you can use the following command to
 			install the dependencies:</para>
 
 <programlisting>
 $ sudo apt-get install build-essential autoconf automake xmlto xsltproc \
-         libkrb5-dev libldap2-dev libsasl2-dev
+         libkrb5-dev libldap2-dev libsasl2-dev samba-dev
 </programlisting>
 
 			<para>On <emphasis role="strong">Fedora</emphasis> you can use the following command to install the
@@ -57,7 +62,7 @@ $ sudo apt-get install build-essential autoconf automake xmlto xsltproc \
 <programlisting>
 $ sudo yum groupinstall "Development Tools"
 $ sudo yum install automake autoconf xmlto xsltproc krb5-devel openldap-devel \
-    cyrus-sasl-devel
+    cyrus-sasl-devel libnetapi-devel
 </programlisting>
 
 		</section>

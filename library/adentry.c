@@ -515,7 +515,7 @@ adcli_entry_set_passwd (adcli_entry *entry, const char *user_pwd)
 	if (code != 0) {
 		_adcli_err ("Couldn't set password for %s account: %s: %s",
 		            entry->object_class,
-		            entry->sam_name, krb5_get_error_message (k5, code));
+		            entry->sam_name, adcli_krb5_get_error_message (k5, code));
 		/* TODO: Parse out these values */
 		res = ADCLI_ERR_DIRECTORY;
 
@@ -597,12 +597,42 @@ user_entry_builder (adcli_entry *entry,
 	return ADCLI_SUCCESS;
 }
 
+/* List of illegal characters in sAMAccountName according to
+ * https://learn.microsoft.com/en-us/windows/win32/adschema/a-samaccountname
+ * In groups names the '@' is allowed while in user names it is illegal. */
+#define ILLEGAL_GROUP_NAME_CHARACTERS "\"/\\[]:;|=,+*?<>"
+#define ILLEGAL_USER_NAME_CHARACTERS ILLEGAL_GROUP_NAME_CHARACTERS "@"
+
+static bool check_name (const char *name, const char *illegal_characters)
+{
+	char *c;
+
+	if ( (c = strpbrk (name, illegal_characters)) == NULL) {
+		return true;
+	} else {
+		_adcli_err ("Found illegal character '%c' in name '%s'",
+		            *c, name);
+		return false;
+	}
+}
+
+static bool check_group_name (const char *name)
+{
+	return check_name (name, ILLEGAL_GROUP_NAME_CHARACTERS);
+}
+
+static bool check_user_name (const char *name)
+{
+	return check_name (name, ILLEGAL_USER_NAME_CHARACTERS);
+}
+
 adcli_entry *
 adcli_entry_new_user (adcli_conn *conn,
                       const char *sam_name)
 {
 	return_val_if_fail (conn != NULL, NULL);
 	return_val_if_fail (sam_name != NULL, NULL);
+	return_val_if_fail (check_user_name (sam_name), NULL);
 	return entry_new (conn, "user", user_entry_builder, sam_name);
 }
 
@@ -624,6 +654,7 @@ adcli_entry_new_group (adcli_conn *conn,
 {
 	return_val_if_fail (conn != NULL, NULL);
 	return_val_if_fail (sam_name != NULL, NULL);
+	return_val_if_fail (check_group_name (sam_name), NULL);
 	return entry_new (conn, "group", group_entry_builder, sam_name);
 }
 

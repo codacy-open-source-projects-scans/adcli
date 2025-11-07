@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <sys/wait.h>
+#include <arpa/inet.h>
 
 static adcli_message_func message_func = NULL;
 static char last_error[2048] = { 0, };
@@ -168,7 +169,7 @@ _adcli_strv_dup (char **strv)
 		return NULL;
 
 	count = seq_count (strv);
-	return seq_dup (strv, &count, (seq_copy)strdup);
+	return seq_dup (strv, &count, (seq_copy)strdup, (seq_destroy)free);
 }
 
 char *
@@ -551,7 +552,7 @@ _adcli_check_nt_time_string_lifetime (const char *nt_time_string,
 
 adcli_result
 _adcli_call_external_program (const char *binary, char * const *argv,
-                              const char *stdin_data,
+			      char * const *envp, const char *stdin_data,
                               uint8_t **stdout_data, size_t *stdout_data_len)
 {
 	int ret;
@@ -565,6 +566,50 @@ _adcli_call_external_program (const char *binary, char * const *argv,
 	int status;
 	uint8_t read_buf[4096];
 	uint8_t *out;
+	char **child_env = NULL;
+	size_t child_env_size = 0;
+
+	/* prepare child environment, append envp to environ */
+	if (envp != NULL) {
+		size_t environ_size = 0;
+		size_t envp_size = 0;
+		int i, j;
+
+		for (i = 0; environ[i] != NULL; i++) {
+			environ_size++;
+		}
+
+		for (i = 0; envp[i] != NULL; i++) {
+			envp_size++;
+		}
+
+		child_env_size = environ_size + envp_size + 1;
+		child_env = calloc (child_env_size, sizeof(char *));
+		if (child_env == NULL) {
+			_adcli_err ("Failed to allocate memory.");
+			return ADCLI_ERR_FAIL;
+		}
+
+		memset (child_env, 0, child_env_size);
+
+		for (i = 0, j = 0; environ[i] != NULL; i++, j++) {
+			child_env[j] = strdup (environ[i]);
+			if (child_env[j] == NULL) {
+				_adcli_err ("Failed to allocate memory.");
+				ret = ADCLI_ERR_FAIL;
+				goto done;
+			}
+		}
+
+		for (i = 0; envp[i] != NULL; i++, j++) {
+			child_env[j] = strdup (envp[i]);
+			if (child_env[j] == NULL) {
+				_adcli_err ("Failed to allocate memory.");
+				ret = ADCLI_ERR_FAIL;
+				goto done;
+			}
+		}
+	}
 
 	errno = 0;
 	ret = access (binary, X_OK);
@@ -613,7 +658,11 @@ _adcli_call_external_program (const char *binary, char * const *argv,
 			exit (EXIT_FAILURE);
 		}
 
-		execv (binary, argv);
+                if (child_env != NULL) {
+                        execve(binary, argv, child_env);
+                } else {
+                        execv(binary, argv);
+                }
 		_adcli_err ("Failed to run %s.", binary);
 		ret = ADCLI_ERR_FAIL;
 		goto done;
@@ -633,7 +682,7 @@ _adcli_call_external_program (const char *binary, char * const *argv,
 		close (pipefd_to_child[0]);
 		pipefd_to_child[0] = -1;
 		close (pipefd_to_child[1]);
-		pipefd_to_child[0] = -1;
+		pipefd_to_child[1] = -1;
 
 		if (stdout_data != NULL || stdout_data_len != NULL) {
 			rlen = read (pipefd_from_child[0], read_buf, sizeof (read_buf));
@@ -675,6 +724,13 @@ _adcli_call_external_program (const char *binary, char * const *argv,
 	ret = ADCLI_SUCCESS;
 
 done:
+	if (child_env != NULL) {
+		for (int i = 0; i < child_env_size; i++) {
+			free (child_env[i]);
+		}
+		free (child_env);
+	}
+
 	if (pipefd_from_child[0] != -1) {
 		close (pipefd_from_child[0]);
 	}
@@ -696,6 +752,7 @@ done:
 			if (WIFEXITED (status) && WEXITSTATUS (status) != 0) {
 				_adcli_err ("net command failed with %d.",
 				            WEXITSTATUS (status));
+				ret = ADCLI_ERR_FAIL;
 			}
 		}
 	}
@@ -703,6 +760,39 @@ done:
 	return ret;
 }
 
+adcli_result
+adcli_sockaddr_to_string(struct sockaddr *sa, char *addr, size_t addr_len)
+{
+	const char *p;
+
+	if (sa == NULL) {
+		return ADCLI_ERR_FAIL;
+	}
+
+	errno = 0;
+	switch (sa->sa_family) {
+		case AF_INET:
+			p = inet_ntop(AF_INET,
+		 &(((struct sockaddr_in *)sa)->sin_addr),
+		 addr, addr_len);
+		break;
+		case AF_INET6:
+			p = inet_ntop(AF_INET6,
+		 &(((struct sockaddr_in6 *)sa)->sin6_addr),
+		 addr, addr_len);
+		break;
+		default:
+			_adcli_err("Failed to get LDAP server address, unknown socket family");
+			return ADCLI_ERR_FAIL;
+	}
+
+	if (p == NULL) {
+		_adcli_err("Failed to convert LDAP server address: %s", strerror(errno));
+		return ADCLI_ERR_FAIL;
+	}
+
+	return ADCLI_SUCCESS;
+}
 
 #ifdef UTIL_TESTS
 
@@ -853,25 +943,25 @@ test_call_external_program (void)
 	size_t stdout_data_len;
 
 	argv[0] = "/does/not/exists";
-	res = _adcli_call_external_program (argv[0], argv, NULL, NULL, NULL);
+	res = _adcli_call_external_program (argv[0], argv, NULL, NULL, NULL, NULL);
 	assert (res == ADCLI_ERR_FAIL);
 
 #ifdef BIN_CAT
 	argv[0] = BIN_CAT;
-	res = _adcli_call_external_program (argv[0], argv, "Hello",
+	res = _adcli_call_external_program (argv[0], argv, NULL, "Hello",
 	                                    &stdout_data, &stdout_data_len);
 	assert (res == ADCLI_SUCCESS);
 	assert (strncmp ("Hello", (char *) stdout_data, stdout_data_len) == 0);
 	free (stdout_data);
 
-	res = _adcli_call_external_program (argv[0], argv, "Hello",
+	res = _adcli_call_external_program (argv[0], argv, NULL, "Hello",
 	                                    NULL, NULL);
 	assert (res == ADCLI_SUCCESS);
 #endif
 
 #ifdef BIN_REV
 	argv[0] = BIN_REV;
-	res = _adcli_call_external_program (argv[0], argv, "Hello\n",
+	res = _adcli_call_external_program (argv[0], argv, NULL, "Hello\n",
 	                                    &stdout_data, &stdout_data_len);
 	assert (res == ADCLI_SUCCESS);
 	assert (strncmp ("olleH\n", (char *) stdout_data, stdout_data_len) == 0);
@@ -880,7 +970,7 @@ test_call_external_program (void)
 
 #ifdef BIN_TAC
 	argv[0] = BIN_TAC;
-	res = _adcli_call_external_program (argv[0], argv, "Hello\nWorld\n",
+	res = _adcli_call_external_program (argv[0], argv, NULL, "Hello\nWorld\n",
 	                                    &stdout_data, &stdout_data_len);
 	assert (res == ADCLI_SUCCESS);
 	assert (strncmp ("World\nHello\n", (char *) stdout_data, stdout_data_len) == 0);
@@ -890,7 +980,7 @@ test_call_external_program (void)
 #ifdef BIN_ECHO
 	argv[0] = BIN_ECHO;
 	argv[1] = "Hello";
-	res = _adcli_call_external_program (argv[0], argv, NULL,
+	res = _adcli_call_external_program (argv[0], argv, NULL, NULL,
 	                                    &stdout_data, &stdout_data_len);
 	assert (res == ADCLI_SUCCESS);
 	assert (strncmp ("Hello\n", (char *) stdout_data, stdout_data_len) == 0);

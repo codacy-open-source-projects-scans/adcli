@@ -33,6 +33,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdio.h>
+#include <sys/param.h>
 
 krb5_error_code
 _adcli_krb5_build_principal (krb5_context k5,
@@ -174,7 +175,7 @@ _adcli_krb5_init_context (krb5_context *k5)
 
 	} else if (code != 0) {
 		_adcli_err ("Failed to create kerberos context: %s",
-		            krb5_get_error_message (NULL, code));
+		            adcli_krb5_get_error_message (NULL, code));
 		return ADCLI_ERR_UNEXPECTED;
 	}
 
@@ -192,7 +193,7 @@ _adcli_krb5_open_keytab (krb5_context k5,
 		code = krb5_kt_resolve (k5, keytab_name, keytab);
 		if (code != 0) {
 			_adcli_err ("Failed to open keytab: %s: %s",
-			            keytab_name, krb5_get_error_message (k5, code));
+			            keytab_name, adcli_krb5_get_error_message (k5, code));
 			return ADCLI_ERR_FAIL;
 		}
 
@@ -200,12 +201,45 @@ _adcli_krb5_open_keytab (krb5_context k5,
 		code = krb5_kt_default (k5, keytab);
 		if (code != 0) {
 			_adcli_err ("Failed to open default keytab: %s",
-			            krb5_get_error_message (k5, code));
+			            adcli_krb5_get_error_message (k5, code));
 			return ADCLI_ERR_FAIL;
 		}
 	}
 
 	return ADCLI_SUCCESS;
+}
+
+typedef struct {
+	krb5_kvno kvno;
+	krb5_principal principal;
+	krb5_enctype enctype;
+	int matched;
+} match_principal_kvno_enctype;
+
+static krb5_boolean
+match_principal_and_kvno_and_enctype (krb5_context k5,
+                                      krb5_keytab_entry *entry,
+                                      void *data)
+{
+	krb5_error_code code;
+	krb5_boolean similar = FALSE;
+	match_principal_kvno_enctype *closure = data;
+
+	assert (closure->principal);
+	assert (closure->enctype);
+
+	code = krb5_c_enctype_compare (k5, closure->enctype, entry->key.enctype,
+	                               &similar);
+
+	if (code == 0 && entry->vno == closure->kvno && similar) {
+		/* Is this the principal we're looking for? */
+		if (krb5_principal_compare (k5, entry->principal, closure->principal)) {
+			closure->matched = 1;
+			return 1;
+		}
+	}
+
+	return 0;
 }
 
 typedef struct {
@@ -291,6 +325,7 @@ _adcli_krb5_keytab_copy_entries (krb5_context k5,
 	krb5_error_code code;
 	int i;
 	match_enctype_kvno closure;
+	match_principal_kvno_enctype remove_closure;
 
 	for (i = 0; enctypes[i] != 0; i++) {
 
@@ -304,6 +339,28 @@ _adcli_krb5_keytab_copy_entries (krb5_context k5,
 		                                 match_enctype_and_kvno, &closure);
 		if (code != 0 || closure.matched == 0) {
 			return code != 0 ? code : ENOKEY;
+		}
+
+		/* remove existing entry, if any, because krb5_kt_add_entry()
+		 * only adds entries and does not overwrite existing ones.
+		 */
+		remove_closure.kvno = kvno;
+		remove_closure.enctype = enctypes[i];
+		remove_closure.principal = principal;
+		remove_closure.matched = 0;
+
+		code = _adcli_krb5_keytab_clear (k5, keytab,
+		                                 match_principal_and_kvno_and_enctype,
+		                                 &remove_closure);
+		if (code != 0) {
+			_adcli_err ("Couldn't update keytab: %s",
+			            adcli_krb5_get_error_message (k5, code));
+			return code;
+		}
+
+		if (remove_closure.matched) {
+			_adcli_info ("Cleared old entry kvno %d enctype %d from keytab",
+			             kvno, enctypes[i]);
 		}
 
 		entry.principal = principal;
@@ -569,4 +626,19 @@ _adcli_krb5_format_enctypes (krb5_enctype *enctypes)
 		return_val_if_reached (NULL);
 
 	return value;
+}
+
+const char *adcli_krb5_get_error_message (krb5_context ctx, krb5_error_code code)
+{
+	static char out[4096];
+	const char *tmp;
+	size_t len;
+
+	tmp = krb5_get_error_message (ctx, code);
+	len = strlen (tmp);
+	memcpy (out, tmp, MIN (sizeof (out), len));
+	out[sizeof(out) - 1] = '\0';
+	krb5_free_error_message (ctx, tmp);
+
+	return out;
 }

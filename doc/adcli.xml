@@ -413,8 +413,9 @@ Password for Administrator:
 			<para>Please note that Samba's <command>net</command>
 			requires some settings in <filename>smb.conf</filename>
 			to create the database entries correctly. Most
-			important here is currently the
-			<option>workgroup</option> option, see
+			important here are currently the
+			<option>workgroup</option>, <option>realm</option> and
+			<option>security</option> options, see
 			<citerefentry><refentrytitle>smb.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>
 			for details.</para></listitem>
 		</varlistentry>
@@ -444,6 +445,12 @@ Password for Administrator:
 	well. Either the current value or the default list of AD's supported
 	encryption types filtered by the permitted encryption types of the
 	client's Kerberos configuration are written.</para>
+
+	<para>If the computer object already exists in AD and in the
+	<option>userAccountControl</option> attribute the flag
+	<option>USE_DES_KEY_ONLY</option> is set, the flag will be removed
+	during the join because in current environments using DES for encryption
+	is deprecated since quite some time or already disabled.</para>
 </refsect1>
 
 <refsect1 id='updating'>
@@ -454,6 +461,11 @@ Password for Administrator:
 	keys to the keytab and removes older keys. It keeps the previous key on purpose
 	because AD will need some time to replicate the new key to all DCs hence the
 	previous key might still be used.
+	</para>
+	<para>Service principal names will be synced between the keytab and the Active
+	Directory computer object in the sense that principals missing on either side
+	will be added automatically. To remove service principals the
+	<option>--remove-service-principal</option> command line option must be used.
 	</para>
 
 <programlisting>
@@ -615,8 +627,9 @@ $ adcli update --login-ccache=/tmp/krbcc_123
 			<para>Please note that Samba's <command>net</command>
 			requires some settings in <filename>smb.conf</filename>
 			to create the database entries correctly. Most
-			important here is currently the
-			<option>workgroup</option> option, see
+			important here are currently the
+			<option>workgroup</option>, <option>realm</option> and
+			<option>security</option> options, see
 			<citerefentry><refentrytitle>smb.conf</refentrytitle><manvolnum>5</manvolnum></citerefentry>
 			for details.</para>
 			<para>Note that if the machine account password is not
@@ -985,7 +998,19 @@ Password for Administrator:
 	computer adcli is running on is used, as returned by
 	<literal>gethostname()</literal>.</para>
 
-	<para>The various global options can be used.</para>
+	<para>In addition to the global options, you can specify the following
+	option to control how this operation is done.</para>
+
+	<variablelist>
+		<varlistentry>
+			<term><option>--recursive</option></term>
+			<listitem><para>If a computer object has child objects
+			this option must be used to delete the computer object
+			and all child objects. If the options is not used in
+			this case adcli will print and error message indicating
+			that this option is needed.</para></listitem>
+		</varlistentry>
+	</variablelist>
 
 </refsect1>
 

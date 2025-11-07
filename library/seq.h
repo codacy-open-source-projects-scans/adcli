@@ -89,7 +89,8 @@ int                seq_count                  (seq_voidp seq);
 
 seq_voidp          seq_dup                    (seq_voidp seq,
                                                int *length,
-                                               seq_copy copy);
+                                               seq_copy copy,
+                                               seq_destroy destroy);
 
 void               seq_free                   (seq_voidp seq,
                                                seq_destroy destroy);

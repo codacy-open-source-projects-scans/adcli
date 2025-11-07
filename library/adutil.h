@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <sys/socket.h>
 
 typedef enum {
 	/* Successful completion */
@@ -90,5 +91,9 @@ void              adcli_set_message_func        (adcli_message_func message_func
 void              adcli_clear_last_error        (void);
 
 const char *      adcli_get_last_error          (void);
+
+adcli_result      adcli_sockaddr_to_string      (struct sockaddr *sa,
+						 char *addr,
+						 size_t addr_len);
 
 #endif /* ADUTIL_H_ */

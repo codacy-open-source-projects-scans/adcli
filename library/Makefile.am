@@ -29,11 +29,19 @@ libadcli_la_CFLAGS = \
 	$(LBAP_CFLAGS) \
 	$(NULL)
 
+if BUILD_SELINUX_POLICY
+libadcli_la_CFLAGS += $(LIBSELINUX_CFLAGS)
+endif
+
 libadcli_la_LIBADD = \
 	$(LTLIBINTL) \
 	$(KRB5_LIBS) \
 	$(LDAP_LIBS) \
 	$(NULL)
+
+if BUILD_SELINUX_POLICY
+libadcli_la_LIBADD += $(LIBSELINUX_LIBS)
+endif
 
 check_PROGRAMS = \
 	test-seq \
@@ -60,6 +68,9 @@ test_attrs_LDADD = $(test_ldap_LDADD)
 test_adenroll_SOURCES = adenroll.c $(test_ldap_SOURCES)
 test_adenroll_CFLAGS = -DADENROLL_TESTS
 test_adenroll_LDADD = $(KRB5_LIBS)
+if BUILD_SELINUX_POLICY
+test_adenroll_LDADD += $(LIBSELINUX_LIBS)
+endif
 
 TESTS = $(check_PROGRAMS)
 

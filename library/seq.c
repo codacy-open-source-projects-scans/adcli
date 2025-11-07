@@ -299,7 +299,8 @@ seq_lookup (seq_voidp sequence,
 void *
 seq_dup (seq_voidp sequence,
          int *length,
-         seq_copy copy)
+         seq_copy copy,
+         seq_destroy destroy)
 {
 	void **seq = sequence;
 	void **copied;
@@ -308,6 +309,7 @@ seq_dup (seq_voidp sequence,
 	int at;
 
 	assert (length != NULL);
+	assert ( (copy != NULL && destroy != NULL) || (copy == NULL && destroy == NULL) );
 
 	len = *length;
 	alloc = alloc_size (len + 1);
@@ -321,7 +323,10 @@ seq_dup (seq_voidp sequence,
 			copied[at] = seq[at];
 		} else {
 			copied[at] = copy (seq[at]);
-			bail_on_null (copied[at]);
+			if (copied[at] == NULL) {
+				destroy (copied);
+				return NULL;
+			}
 		}
 	}
 
@@ -707,7 +712,7 @@ test_dup (void)
 	seq = seq_insert (seq, &len, "3", (seq_compar)strcmp, NULL);
 	seq = seq_insert (seq, &len, "1", (seq_compar)strcmp, NULL);
 
-	dup = seq_dup (seq, &len, NULL);
+	dup = seq_dup (seq, &len, NULL, NULL);
 	assert (dup != NULL);
 
 	assert_str_eq (dup[0], "1");
@@ -734,7 +739,7 @@ test_dup_deep (void)
 	seq = seq_insert (seq, &len, "3", (seq_compar)strcmp, NULL);
 	seq = seq_insert (seq, &len, "1", (seq_compar)strcmp, NULL);
 
-	dup = seq_dup (seq, &len, (seq_copy)strdup);
+	dup = seq_dup (seq, &len, (seq_copy)strdup, (seq_destroy)free);
 	assert (dup != NULL);
 
 	assert_str_eq (dup[0], "1");

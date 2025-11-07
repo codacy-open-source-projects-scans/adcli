@@ -1,0 +1,28 @@
+# adcli Integration tests
+
+These tests will cover test scenarios for adcli perform actions on an AD-server.
+
+## Set up environment and install requirements
+** Refer following to set up environment
+```
+https://tests.sssd.io/en/latest/running-tests.html
+https://github.com/SSSD/sssd-ci-containers
+```
+
+** Setup python virtual environment **
+```
+python3 -m venv .venv
+source .venv/bin/activate
+```
+
+** Setup sssd-test-framework **
+```
+pip install -r requirements.txt
+```
+
+## To run tests from inside adcli/tests
+```
+# pytest --mh-config=mhc.yaml --mh-lazy-ssh -v
+Or
+# pytest --mh-config=mhc.yaml  --mh-log-path=/dev/stderr --pdb test_adcli.py
+````

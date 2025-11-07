@@ -34,6 +34,7 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <sys/stat.h>
 
 #include <assert.h>
@@ -43,6 +44,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 struct _adcli_conn_ctx {
 	int refs;
@@ -74,6 +76,8 @@ struct _adcli_conn_ctx {
 	char *canonical_host;
 	char *domain_short;
 	char *domain_sid;
+	char *domain_guid;
+	char *forest;
 	adcli_disco *domain_disco;
 	enum conn_is_writeable is_writeable;
 	char *default_naming_context;
@@ -83,6 +87,7 @@ struct _adcli_conn_ctx {
 
 	/* Connect state */
 	LDAP *ldap;
+	struct sockaddr *addr;
 	int ldap_authenticated;
 	krb5_context k5;
 	krb5_ccache ccache;
@@ -163,6 +168,16 @@ disco_dance_if_necessary (adcli_conn *conn)
 		if (!conn->domain_short && conn->domain_disco->domain_short) {
 			conn->domain_short = strdup (conn->domain_disco->domain_short);
 			return_if_fail (conn->domain_short != NULL);
+		}
+
+		if (!conn->forest && conn->domain_disco->forest) {
+			conn->forest = strdup(conn->domain_disco->forest);
+			return_if_fail (conn->forest != NULL);
+		}
+
+		if (!conn->domain_guid && conn->domain_disco->domain_guid) {
+			conn->domain_guid = strdup(conn->domain_disco->domain_guid);
+			return_if_fail (conn->domain_guid != NULL);
 		}
 	}
 }
@@ -354,20 +369,20 @@ handle_kinit_krb5_code (adcli_conn *conn,
 	           code == KRB5_PREAUTH_FAILED) {
 		if (type == ADCLI_LOGIN_COMPUTER_ACCOUNT) {
 			_adcli_err ("Couldn't authenticate as machine account: %s: %s",
-			            name, krb5_get_error_message (conn->k5, code));
+			            name, adcli_krb5_get_error_message (conn->k5, code));
 		} else {
 			_adcli_err ("Couldn't authenticate as: %s: %s",
-			            name, krb5_get_error_message (conn->k5, code));
+			            name, adcli_krb5_get_error_message (conn->k5, code));
 		}
 		return ADCLI_ERR_CREDENTIALS;
 
 	} else {
 		if (type == ADCLI_LOGIN_COMPUTER_ACCOUNT) {
 			_adcli_err ("Couldn't get kerberos ticket for machine account: %s: %s",
-			            name, krb5_get_error_message (conn->k5, code));
+			            name, adcli_krb5_get_error_message (conn->k5, code));
 		} else {
 			_adcli_err ("Couldn't get kerberos ticket for: %s: %s",
-			            name, krb5_get_error_message (conn->k5, code));
+			            name, adcli_krb5_get_error_message (conn->k5, code));
 		}
 		return ADCLI_ERR_DIRECTORY;
 	}
@@ -389,9 +404,9 @@ clear_krb5_conf_snippet (adcli_conn *conn)
 static adcli_result
 setup_krb5_conf_snippet (adcli_conn *conn)
 {
-	char *filename;
-	char *snippet;
-	char *controller;
+	char *filename = NULL;
+	char *snippet = NULL;
+	char *controller = NULL;
 	int errn;
 	int ret;
 	int fd;
@@ -416,7 +431,10 @@ setup_krb5_conf_snippet (adcli_conn *conn)
 		controller = strdup (conn->domain_controller);
 	}
 
-	return_unexpected_if_fail (controller != NULL);
+	if (controller == NULL) {
+		free (filename);
+		return_unexpected_if_reached ();
+	}
 
 	if (asprintf (&snippet, "[realms]\n"
 	                        "  %s = {\n"
@@ -429,8 +447,11 @@ setup_krb5_conf_snippet (adcli_conn *conn)
 	                        "  %s = %s\n",
 	              conn->domain_realm, controller, controller, controller,
 	              conn->canonical_host, conn->domain_realm,
-	              conn->domain_controller, conn->domain_realm) < 0)
+	              conn->domain_controller, conn->domain_realm) < 0) {
+		free (controller);
+		free (filename);
 		return_unexpected_if_reached ();
+	}
 
 	old_mask = umask (0177);
 	fd = mkstemp (filename);
@@ -438,6 +459,7 @@ setup_krb5_conf_snippet (adcli_conn *conn)
 	if (fd < 0) {
 		_adcli_warn ("Couldn't create krb5.conf snippet file in: %s: %s",
 		             conn->krb5_conf_dir, strerror (errno));
+		free (filename);
 
 	} else {
 		conn->krb5_conf_snippet = filename;
@@ -492,6 +514,7 @@ krb5_error_code
 _adcli_kinit_computer_creds (adcli_conn *conn,
                              const char *in_tkt_service,
                              krb5_ccache ccache,
+                             const char *explicit_password,
                              krb5_creds *creds)
 {
 	krb5_get_init_creds_opt *opt;
@@ -525,7 +548,8 @@ _adcli_kinit_computer_creds (adcli_conn *conn,
 	if (!creds)
 		creds = &dummy;
 
-	password = conn->computer_password;
+	password = (explicit_password == NULL ? conn->computer_password
+	                                      : explicit_password);
 	new_password = NULL;
 
 	/*
@@ -533,7 +557,7 @@ _adcli_kinit_computer_creds (adcli_conn *conn,
 	 * explicitly requested.
 	 */
 
-	if (conn->keytab) {
+	if (conn->keytab && explicit_password == NULL) {
 		code = krb5_get_init_creds_keytab (k5, creds, principal, conn->keytab,
 		                                   0, (char *)in_tkt_service, opt);
 
@@ -619,7 +643,7 @@ kinit_with_computer_credentials (adcli_conn *conn,
 
 	use_default = (conn->computer_password == NULL);
 
-	code = _adcli_kinit_computer_creds (conn, NULL, ccache, NULL);
+	code = _adcli_kinit_computer_creds (conn, NULL, ccache, NULL, NULL);
 
 	if (code == 0) {
 		_adcli_info ("Authenticated as %scomputer account: %s",
@@ -706,7 +730,7 @@ prep_kerberos_and_kinit (adcli_conn *conn)
 
 			if (code != 0) {
 				_adcli_err ("Couldn't open kerberos credential cache: %s: %s",
-				            conn->login_ccache_name, krb5_get_error_message (NULL, code));
+				            conn->login_ccache_name, adcli_krb5_get_error_message (NULL, code));
 				return ADCLI_ERR_CONFIG;
 			}
 		}
@@ -774,13 +798,68 @@ prep_kerberos_and_kinit (adcli_conn *conn)
 
 }
 
+static int connect_with_timeout (int sockfd, const struct sockaddr *addr,
+                                 socklen_t addrlen)
+{
+	int ret;
+	int flags;
+	fd_set set;
+	struct timeval timeout = { 10, 0 };
+	int err;
+	socklen_t err_len = sizeof (int);
+
+	FD_ZERO (&set);
+	FD_SET (sockfd, &set);
+
+	errno = 0;
+	flags = fcntl (sockfd, F_GETFL, 0);
+	if (flags == -1) {
+		return -1;
+	}
+
+	ret = fcntl (sockfd, F_SETFL, flags | O_NONBLOCK);
+	if (ret == -1) {
+		return -1;
+	}
+
+	ret = connect (sockfd, addr, addrlen);
+	if (ret == -1) {
+		if (errno != EINPROGRESS) {
+			return -1;
+		}
+	}
+
+	errno = 0;
+	ret = select (sockfd + 1, NULL, &set, NULL, &timeout);
+	if (ret <= 0) {
+		if (ret == 0) {
+			errno = ETIMEDOUT;
+		}
+		return -1;
+	}
+
+	ret = getsockopt (sockfd, SOL_SOCKET, SO_ERROR, &err, &err_len);
+	if (ret == -1) {
+		return -1;
+	}
+
+	ret = fcntl (sockfd, F_SETFL, flags);
+	if (ret == -1) {
+		return -1;
+	}
+
+	errno = err;
+	return err == 0 ? 0 : -1;
+}
+
 /* Not included in ldap.h but documented */
 int ldap_init_fd (ber_socket_t fd, int proto, LDAP_CONST char *url, struct ldap **ldp);
 
 static LDAP *
 connect_to_address (const char *host,
                     const char *canonical_host,
-                    bool use_ldaps)
+                    bool use_ldaps,
+		    struct sockaddr **addr)
 {
 	struct addrinfo *res = NULL;
 	struct addrinfo *ai;
@@ -822,7 +901,7 @@ connect_to_address (const char *host,
 		sock = socket (ai->ai_family, ai->ai_socktype, ai->ai_protocol);
 		if (sock < 0) {
 			error = errno;
-		} else if (connect (sock, ai->ai_addr, ai->ai_addrlen) < 0) {
+		} else if (connect_with_timeout (sock, ai->ai_addr, ai->ai_addrlen) < 0) {
 			error = errno;
 			close (sock);
 		} else {
@@ -856,11 +935,19 @@ connect_to_address (const char *host,
 					break;
 				}
 			}
+			break;
 		}
 	}
 
 	if (!ldap && error)
 		_adcli_err ("Couldn't connect to host: %s: %s", host, strerror (error));
+
+	if (ldap != NULL && ai != NULL) {
+		*addr = malloc (sizeof(struct sockaddr));
+		if (*addr != NULL) {
+			memcpy (*addr, ai->ai_addr, sizeof(struct sockaddr));
+		}
+	}
 
 	freeaddrinfo (res);
 	/* coverity[leaked_handle] - the socket is carried inside the ldap struct */
@@ -875,6 +962,7 @@ connect_and_lookup_naming (adcli_conn *conn,
 	LDAPMessage *results;
 	adcli_result res;
 	LDAP *ldap;
+	struct sockaddr *addr = NULL;
 	int ret;
 	int ver;
 
@@ -887,13 +975,15 @@ connect_and_lookup_naming (adcli_conn *conn,
 	};
 
 	assert (conn->ldap == NULL);
+	assert (conn->addr == NULL);
 
 	canonical_host = disco->host_name;
 	if (!canonical_host)
 		canonical_host = disco->host_addr;
 
 	ldap = connect_to_address (disco->host_addr, canonical_host,
-	                           adcli_conn_get_use_ldaps (conn));
+				   adcli_conn_get_use_ldaps (conn),
+				   &addr);
 	if (ldap == NULL)
 		return ADCLI_ERR_DIRECTORY;
 
@@ -956,6 +1046,7 @@ connect_and_lookup_naming (adcli_conn *conn,
 	}
 
 	conn->ldap = ldap;
+	conn->addr = addr;
 
 	free (conn->canonical_host);
 	conn->canonical_host = strdup (canonical_host);
@@ -1215,6 +1306,10 @@ conn_clear_state (adcli_conn *conn)
 		ldap_unbind_ext_s (conn->ldap, NULL, NULL);
 	conn->ldap = NULL;
 
+	if (conn->addr)
+		free(conn->addr);
+	conn->addr = NULL;
+
 	free (conn->canonical_host);
 	conn->canonical_host = NULL;
 
@@ -1313,6 +1408,8 @@ conn_free (adcli_conn *conn)
 	free (conn->domain_realm);
 	free (conn->domain_controller);
 	free (conn->domain_short);
+	free (conn->domain_guid);
+	free (conn->forest);
 	free (conn->default_naming_context);
 	free (conn->configuration_naming_context);
 	_adcli_strv_free (conn->supported_capabilities);
@@ -1421,6 +1518,20 @@ adcli_conn_get_domain_name (adcli_conn *conn)
 	return conn->domain_name;
 }
 
+const char *
+adcli_conn_get_forest_name (adcli_conn *conn)
+{
+	return_val_if_fail (conn != NULL, NULL);
+	return conn->forest;
+}
+
+const char *
+adcli_conn_get_domain_guid(adcli_conn *conn)
+{
+	return_val_if_fail (conn != NULL, NULL);
+	return conn->domain_guid;
+}
+
 void
 adcli_conn_set_domain_name (adcli_conn *conn,
                             const char *value)
@@ -1496,6 +1607,13 @@ adcli_conn_get_ldap_connection (adcli_conn *conn)
 {
 	return_val_if_fail (conn != NULL, NULL);
 	return conn->ldap;
+}
+
+struct sockaddr *
+adcli_conn_get_ldap_address (adcli_conn *conn)
+{
+	return_val_if_fail (conn != NULL, NULL);
+	return conn->addr;
 }
 
 krb5_context

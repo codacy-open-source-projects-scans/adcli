@@ -45,6 +45,9 @@
 #include <fcntl.h>
 #include <iconv.h>
 #include <lber.h>
+#ifdef BUILD_SELINUX_POLICY
+#include <selinux/restorecon.h>
+#endif
 
 #ifndef SAMBA_DATA_TOOL
 #define SAMBA_DATA_TOOL "/usr/bin/net"
@@ -481,7 +484,7 @@ ensure_service_principals (adcli_result res,
 
 	assert (enroll->keytab_principals == NULL);
 
-	if (!enroll->service_principals) {
+	if (!enroll->service_principals && !enroll->is_service) {
 		assert (enroll->service_names != NULL);
 		res = add_service_names_to_service_principals (enroll);
 	}
@@ -525,8 +528,8 @@ ensure_keytab_principals (adcli_result res,
 
 	if (!enroll->is_service) {
 		return_unexpected_if_fail (enroll->service_principals);
-		count = _adcli_strv_len (enroll->service_principals);
 	}
+	count = _adcli_strv_len (enroll->service_principals);
 
 	k5 = adcli_conn_get_krb5_context (enroll->conn);
 	return_unexpected_if_fail (k5 != NULL);
@@ -549,7 +552,7 @@ ensure_keytab_principals (adcli_result res,
 			if (code != 0) {
 				_adcli_err ("Couldn't parse kerberos user principal: %s: %s",
 				            enroll->user_principal,
-				            krb5_get_error_message (k5, code));
+				            adcli_krb5_get_error_message (k5, code));
 				return ADCLI_ERR_CONFIG;
 			}
 		}
@@ -1135,20 +1138,105 @@ filter_for_necessary_updates (adcli_enroll *enroll,
 }
 
 static adcli_result
+update_computer_attribute (adcli_enroll *enroll,
+                           LDAP *ldap,
+                           LDAPMod **mods)
+{
+	adcli_result res = ADCLI_SUCCESS;
+	char *string;
+	int ret;
+
+	/* See if there are any changes to be made? */
+	if (filter_for_necessary_updates (enroll, ldap, enroll->computer_attributes, mods) == 0)
+		return ADCLI_SUCCESS;
+
+	string = _adcli_ldap_mods_to_string (mods);
+	return_unexpected_if_fail (string != NULL);
+
+	_adcli_info ("Modifying %s account: %s", s_or_c (enroll), string);
+
+	ret = ldap_modify_ext_s (ldap, enroll->computer_dn, mods, NULL, NULL);
+
+	if (ret != LDAP_SUCCESS) {
+		_adcli_warn ("Couldn't set %s on %s account: %s: %s",
+		             string, s_or_c (enroll), enroll->computer_dn,
+		             ldap_err2string (ret));
+		res = ADCLI_ERR_DIRECTORY;
+	}
+
+	free (string);
+	return res;
+}
+
+static adcli_result
+ensure_des_not_enforced (adcli_result res, LDAP *ldap,
+                         adcli_enroll *enroll, LDAPMessage *entry)
+{
+	char *uac_str;
+	uint32_t uac = 0;
+	unsigned long attr_val;
+	char *end;
+	char *vals_userAccountControl[] = { NULL , NULL };
+	LDAPMod userAccountControl = { LDAP_MOD_REPLACE, "userAccountControl", { vals_userAccountControl, } };
+	LDAPMod *mods[] = { &userAccountControl, NULL };
+
+	if (res != ADCLI_SUCCESS) {
+		return res;
+	}
+
+	if (entry == NULL) {
+		return ADCLI_SUCCESS;
+	}
+
+	uac_str = _adcli_ldap_parse_value (ldap, entry, "userAccountControl");
+	if (uac_str != NULL) {
+
+		attr_val = strtoul (uac_str, &end, 10);
+		if (*end != '\0' || attr_val > UINT32_MAX) {
+			_adcli_warn ("Invalid userAccountControl '%s' for %s account in directory: %s, assuming 0",
+			            uac_str, s_or_c (enroll), enroll->computer_dn);
+		} else {
+			uac = attr_val;
+		}
+		free (uac_str);
+	}
+
+	if (uac & UAC_USE_DES_KEY_ONLY) {
+		_adcli_warn ("USE_DES_KEY_ONLY is set for '%s', it will be removed.",
+		             enroll->computer_dn);
+
+		uac &= ~(UAC_USE_DES_KEY_ONLY);
+		if (asprintf (&uac_str, "%d", uac) < 0) {
+			return_val_if_reached (ADCLI_ERR_FAIL);
+		}
+
+		vals_userAccountControl[0] = uac_str;
+		res = update_computer_attribute (enroll, ldap, mods);
+		if (res != ADCLI_SUCCESS) {
+			_adcli_err ("Failed to remove USE_DES_KEY_ONLY from '%s'.",
+			            enroll->computer_dn);
+		}
+	}
+
+	return res;
+}
+
+static adcli_result
 validate_computer_account (adcli_enroll *enroll,
+                           LDAP *ldap,
                            int allow_overwrite,
-                           int already_exists)
+                           LDAPMessage *entry)
 {
 	assert (enroll->computer_dn != NULL);
 
-	if (already_exists && !allow_overwrite) {
+	if ( (entry != NULL) && !allow_overwrite) {
 		_adcli_err ("The %s account %s already exists",
 		            s_or_c (enroll), enroll->computer_name);
 		return ADCLI_ERR_CONFIG;
 	}
 
 	/* Do we have an explicitly requested ou? */
-	if (enroll->domain_ou && enroll->domain_ou_explicit && already_exists) {
+	if (enroll->domain_ou && enroll->domain_ou_explicit && (entry != NULL)) {
 		if (!_adcli_ldap_dn_has_ancestor (enroll->computer_dn, enroll->domain_ou)) {
 			_adcli_err ("The %s account %s already exists, "
 			            "but is not in the desired organizational unit.",
@@ -1157,21 +1245,42 @@ validate_computer_account (adcli_enroll *enroll,
 		}
 	}
 
+	ensure_des_not_enforced (ADCLI_SUCCESS, ldap, enroll, entry);
+
 	return ADCLI_SUCCESS;
 }
 
 static adcli_result
 delete_computer_account (adcli_enroll *enroll,
-                         LDAP *ldap)
+                         LDAP *ldap,
+                         adcli_enroll_flags delete_flags)
 {
 	int ret;
+	LDAPControl *ctrls[2] = { NULL, NULL };
+	LDAPControl **del_ctrl = NULL;
 
-	ret = ldap_delete_ext_s (ldap, enroll->computer_dn, NULL, NULL);
+	if (delete_flags & ADCLI_ENROLL_RECURSIVE_DELETE) {
+		ret = ldap_control_create (LDAP_CONTROL_X_TREE_DELETE, 0, NULL, 0, &ctrls[0]);
+		if (ret != LDAP_SUCCESS) {
+			_adcli_err ("Recursive delete requested, creating control failed.\n");
+			return ADCLI_ERR_UNEXPECTED;
+		}
+		del_ctrl = ctrls;
+	}
+
+	ret = ldap_delete_ext_s (ldap, enroll->computer_dn, del_ctrl, NULL);
+	if (ctrls[0]) {
+		ldap_control_free (ctrls[0]);
+	}
 	if (ret == LDAP_INSUFFICIENT_ACCESS) {
 		return _adcli_ldap_handle_failure (ldap, ADCLI_ERR_CREDENTIALS,
 		                                   "Insufficient permissions to delete computer account: %s",
 		                                   enroll->computer_dn);
 
+	} else if (ret == LDAP_NOT_ALLOWED_ON_NONLEAF) {
+		return _adcli_ldap_handle_failure (ldap, ADCLI_ERR_DIRECTORY,
+		                                   "Cannot delete computer object %s with child objects,\nuse --recursive to delete child objects as well.",
+		                                   enroll->computer_dn);
 	} else if (ret != LDAP_SUCCESS) {
 		return _adcli_ldap_handle_failure (ldap, ADCLI_ERR_DIRECTORY,
 		                                   "Couldn't delete computer account: %s",
@@ -1191,7 +1300,9 @@ locate_computer_account (adcli_enroll *enroll,
                          LDAPMessage **rresults,
                          LDAPMessage **rentry)
 {
-	char *attrs[] = { "objectClass", "CN", NULL };
+	/* The userAccountControl attribute is needed to check for
+	 * USE_DES_KEY_ONLY later */
+	char *attrs[] = { "objectClass", "CN", "userAccountControl", NULL };
 	LDAPMessage *results = NULL;
 	LDAPMessage *entry = NULL;
 	const char *base;
@@ -1279,7 +1390,9 @@ load_computer_account (adcli_enroll *enroll,
                        LDAPMessage **rresults,
                        LDAPMessage **rentry)
 {
-	char *attrs[] = { "objectClass", NULL };
+	/* The userAccountControl attribute is needed to check for
+	 * USE_DES_KEY_ONLY later */
+	char *attrs[] = { "objectClass", "userAccountControl", NULL };
 	LDAPMessage *results = NULL;
 	LDAPMessage *entry = NULL;
 	int ret;
@@ -1433,7 +1546,7 @@ locate_or_create_computer_account (adcli_enroll *enroll,
 			return res;
 	}
 
-	res = validate_computer_account (enroll, allow_overwrite, entry != NULL);
+	res = validate_computer_account (enroll, ldap, allow_overwrite, entry);
 	if (res == ADCLI_SUCCESS && entry == NULL)
 		res = create_computer_account (enroll, ldap, ldap_passwd);
 
@@ -1523,7 +1636,7 @@ set_password_with_user_creds (adcli_enroll *enroll)
 	if (code != 0) {
 		_adcli_err ("Couldn't set password for %s account: %s: %s",
 		            s_or_c (enroll),
-		            enroll->computer_sam, krb5_get_error_message (k5, code));
+		            enroll->computer_sam, adcli_krb5_get_error_message (k5, code));
 		/* TODO: Parse out these values */
 		res = ADCLI_ERR_DIRECTORY;
 
@@ -1580,11 +1693,12 @@ set_password_with_computer_creds (adcli_enroll *enroll)
 
 	_adcli_info ("Trying to change %s password with Kerberos", s_or_c (enroll));
 
-	code = _adcli_kinit_computer_creds (enroll->conn, "kadmin/changepw", NULL, &creds);
+	code = _adcli_kinit_computer_creds (enroll->conn, "kadmin/changepw",
+	                                    NULL, NULL, &creds);
 	if (code != 0) {
 		_adcli_err ("Couldn't get change password ticket for %s account: %s: %s",
 		            s_or_c (enroll),
-		            enroll->computer_sam, krb5_get_error_message (k5, code));
+		            enroll->computer_sam, adcli_krb5_get_error_message (k5, code));
 		return ADCLI_ERR_DIRECTORY;
 	}
 
@@ -1596,7 +1710,7 @@ set_password_with_computer_creds (adcli_enroll *enroll)
 	if (code != 0) {
 		_adcli_err ("Couldn't change password for %s account: %s: %s",
 		            s_or_c (enroll),
-		            enroll->computer_sam, krb5_get_error_message (k5, code));
+		            enroll->computer_sam, adcli_krb5_get_error_message (k5, code));
 		/* TODO: Parse out these values */
 		res = ADCLI_ERR_DIRECTORY;
 
@@ -1625,6 +1739,25 @@ set_password_with_computer_creds (adcli_enroll *enroll)
 		        _adcli_info ("kvno incremented to %d", enroll->kvno);
 		}
 		res = ADCLI_SUCCESS;
+	}
+
+	/* Check if maybe the password change was successful on the AD side
+	 * and the returned error has some other reason. */
+	if (res != ADCLI_SUCCESS) {
+		code = _adcli_kinit_computer_creds (enroll->conn, NULL, NULL,
+		                                    enroll->computer_password,
+		                                    NULL);
+		if (code == 0) {
+			_adcli_err ("AD is accepting new computer password, "
+			            "assuming change was successful.");
+			if (enroll->kvno > 0) {
+				enroll->kvno++;
+				_adcli_info ("kvno incremented to %d", enroll->kvno);
+			}
+			res = ADCLI_SUCCESS;
+		}
+		/* No need to check for errors because an error is expected
+		 * here since the password changed failed. */
 	}
 
 	krb5_free_data_contents (k5, &result_string);
@@ -1753,37 +1886,6 @@ update_and_calculate_enctypes (adcli_enroll *enroll)
 	return ADCLI_SUCCESS;
 }
 
-static adcli_result
-update_computer_attribute (adcli_enroll *enroll,
-                           LDAP *ldap,
-                           LDAPMod **mods)
-{
-	adcli_result res = ADCLI_SUCCESS;
-	char *string;
-	int ret;
-
-	/* See if there are any changes to be made? */
-	if (filter_for_necessary_updates (enroll, ldap, enroll->computer_attributes, mods) == 0)
-		return ADCLI_SUCCESS;
-
-	string = _adcli_ldap_mods_to_string (mods);
-	return_unexpected_if_fail (string != NULL);
-
-	_adcli_info ("Modifying %s account: %s", s_or_c (enroll), string);
-
-	ret = ldap_modify_ext_s (ldap, enroll->computer_dn, mods, NULL, NULL);
-
-	if (ret != LDAP_SUCCESS) {
-		_adcli_warn ("Couldn't set %s on %s account: %s: %s",
-		             string, s_or_c (enroll), enroll->computer_dn,
-		             ldap_err2string (ret));
-		res = ADCLI_ERR_DIRECTORY;
-	}
-
-	free (string);
-	return res;
-}
-
 static char *get_user_account_control (adcli_enroll *enroll)
 {
 	uint32_t uac = 0;
@@ -1849,11 +1951,6 @@ update_computer_account (adcli_enroll *enroll)
 	int res = 0;
 	LDAP *ldap;
 	char *value = NULL;
-
-	/* No updates for service accounts */
-	if (enroll->is_service) {
-		return;
-	}
 
 	ldap = adcli_conn_get_ldap_connection (enroll->conn);
 	return_if_fail (ldap != NULL);
@@ -1961,11 +2058,6 @@ update_service_principals (adcli_enroll *enroll)
 	LDAP *ldap;
 	int ret;
 
-	/* No updates for service accounts */
-	if (enroll->is_service) {
-		return ADCLI_SUCCESS;
-	}
-
 	ldap = adcli_conn_get_ldap_connection (enroll->conn);
 	return_unexpected_if_fail (ldap != NULL);
 
@@ -2022,6 +2114,66 @@ ensure_host_keytab (adcli_result res,
 
 	_adcli_info ("Using keytab: %s", enroll->keytab_name);
 	return ADCLI_SUCCESS;
+}
+
+adcli_result
+ensure_host_keytab_selinux_context (adcli_result res,
+                                    adcli_enroll *enroll)
+{
+#ifdef BUILD_SELINUX_POLICY
+	int ret;
+
+	if (res != ADCLI_SUCCESS)
+		return res;
+
+	if (enroll->keytab_name == NULL) {
+		_adcli_info ("No keytab name available, skipping SELinux restorecon.");
+		return ADCLI_SUCCESS;
+	}
+
+	ret = selinux_restorecon (adcli_enroll_get_keytab_name (enroll), 0);
+	if (ret != 0) {
+		_adcli_err ("Failed to set SELinux context for %s with error %d: %s",
+		            enroll->keytab_name, ret, strerror (ret));
+		return ADCLI_ERR_FAIL;
+	}
+#endif
+
+	return ADCLI_SUCCESS;
+}
+
+
+static krb5_boolean
+search_realm_in_keytab_entry (krb5_context k5,
+                              krb5_keytab_entry *entry,
+                              void *data)
+{
+	adcli_enroll *enroll = data;
+	krb5_error_code code;
+	krb5_principal principal;
+	char *value = NULL;
+	char *name = NULL;
+
+	/* Skip over any entry without a principal or realm */
+	principal = entry->principal;
+	if (!principal || !principal->realm.length)
+		return TRUE;
+
+	/* Use realm from the first HOST$ entry, if any */
+	if (adcli_conn_get_domain_realm (enroll->conn) == NULL) {
+		code = krb5_unparse_name_flags (k5, principal, KRB5_PRINCIPAL_UNPARSE_NO_REALM, &name);
+		return_val_if_fail (code == 0, FALSE);
+
+		if (_adcli_str_has_suffix (name, "$") && !strchr (name, '/')) {
+			value = _adcli_str_dupn (principal->realm.data, principal->realm.length);
+			adcli_conn_set_domain_realm (enroll->conn, value);
+			_adcli_info ("Found realm in keytab: %s", value);
+			free (value);
+		}
+	}
+
+	free (name);
+	return TRUE;
 }
 
 static krb5_boolean
@@ -2108,12 +2260,27 @@ load_host_keytab (adcli_enroll *enroll)
 	if (res != ADCLI_SUCCESS)
 		return res;
 
+	/* Do a first iteration over the keytab entries to find a suitable
+	 * realm by looking for a HOST$ principal and use its realm. If none
+	 * was found the realm from the first entry is used in the second
+	 * iteration as a fallback. */
+	res = _adcli_krb5_open_keytab (k5, enroll->keytab_name, &keytab);
+	if (res == ADCLI_SUCCESS) {
+		code = _adcli_krb5_keytab_enumerate (k5, keytab, search_realm_in_keytab_entry, enroll);
+		if (code != 0) {
+			_adcli_err ("Couldn't enumerate keytab: %s: %s",
+		                    enroll->keytab_name, adcli_krb5_get_error_message (k5, code));
+			res = ADCLI_ERR_FAIL;
+		}
+		krb5_kt_close (k5, keytab);
+	}
+
 	res = _adcli_krb5_open_keytab (k5, enroll->keytab_name, &keytab);
 	if (res == ADCLI_SUCCESS) {
 		code = _adcli_krb5_keytab_enumerate (k5, keytab, load_keytab_entry, enroll);
 		if (code != 0) {
 			_adcli_err ("Couldn't enumerate keytab: %s: %s",
-		                    enroll->keytab_name, krb5_get_error_message (k5, code));
+		                    enroll->keytab_name, adcli_krb5_get_error_message (k5, code));
 			res = ADCLI_ERR_FAIL;
 		}
 		krb5_kt_close (k5, keytab);
@@ -2225,7 +2392,7 @@ remove_principal_from_keytab (adcli_enroll *enroll,
 
 	if (code != 0) {
 		_adcli_err ("Couldn't update keytab: %s: %s",
-		            enroll->keytab_name, krb5_get_error_message (k5, code));
+		            enroll->keytab_name, adcli_krb5_get_error_message (k5, code));
 		return ADCLI_ERR_FAIL;
 	}
 
@@ -2242,7 +2409,7 @@ add_principal_to_keytab (adcli_enroll *enroll,
 {
 	match_principal_kvno closure;
 	krb5_data password;
-	krb5_error_code code;
+	krb5_error_code code = 0;
 	krb5_data *salts;
 	krb5_enctype *enctypes;
 
@@ -2252,12 +2419,14 @@ add_principal_to_keytab (adcli_enroll *enroll,
 	closure.principal = principal;
 	closure.matched = 0;
 
-	code = _adcli_krb5_keytab_clear (k5, enroll->keytab,
-	                                 match_principal_and_kvno, &closure);
+	if (! (flags & ADCLI_ENROLL_PASSWORD_VALID)) {
+		code = _adcli_krb5_keytab_clear (k5, enroll->keytab,
+		                                 match_principal_and_kvno, &closure);
+	}
 
 	if (code != 0) {
 		_adcli_err ("Couldn't update keytab: %s: %s",
-		            enroll->keytab_name, krb5_get_error_message (k5, code));
+		            enroll->keytab_name, adcli_krb5_get_error_message (k5, code));
 		return ADCLI_ERR_FAIL;
 	}
 
@@ -2296,7 +2465,7 @@ add_principal_to_keytab (adcli_enroll *enroll,
 			                                         enctypes, salts, which_salt);
 			if (code != 0) {
 				_adcli_warn ("Couldn't authenticate with keytab while discovering which salt to use: %s: %s",
-				             principal_name, krb5_get_error_message (k5, code));
+				             principal_name, adcli_krb5_get_error_message (k5, code));
 				*which_salt = DEFAULT_SALT;
 			} else {
 				assert (*which_salt >= 0);
@@ -2313,7 +2482,7 @@ add_principal_to_keytab (adcli_enroll *enroll,
 
 	if (code != 0) {
 		_adcli_err ("Couldn't add keytab entries: %s: %s",
-		            enroll->keytab_name, krb5_get_error_message (k5, code));
+		            enroll->keytab_name, adcli_krb5_get_error_message (k5, code));
 		return ADCLI_ERR_FAIL;
 	}
 
@@ -2340,9 +2509,9 @@ update_keytab_for_principals (adcli_enroll *enroll,
 
 	for (i = 0; enroll->keytab_principals[i] != 0; i++) {
 		if (krb5_unparse_name (k5, enroll->keytab_principals[i], &name) != 0)
-			name = "";
+			name = NULL;
 		res = add_principal_to_keytab (enroll, k5, enroll->keytab_principals[i],
-		                               name, &which_salt, flags);
+		                               name != NULL ? name : "", &which_salt, flags);
 		krb5_free_unparsed_name (k5, name);
 
 		if (res != ADCLI_SUCCESS)
@@ -2362,6 +2531,150 @@ update_keytab_for_principals (adcli_enroll *enroll,
 
 	return ADCLI_SUCCESS;
 }
+
+#if defined(SAMBA_NETAPI_HAS_COMPOSEODJ)
+
+#define CHECK_SNPRINTF(x, v) \
+	do { if ((x) < 0 || (x) >= sizeof((v))) { \
+		_adcli_err ("%s: Insufficient buffer for %s", __func__, #v); \
+		return ADCLI_ERR_FAIL; \
+	} } while (0)
+
+static adcli_result
+update_samba_data (adcli_enroll *enroll)
+{
+	int ret;
+	char dns_domain_name[128];
+	char netbios_domain_name[128];
+	char domain_sid[128];
+	char domain_guid[128];
+	char forest_name[128];
+	char machine_account_name[128];
+	char dc_name[128];
+	char dc_address[128];
+	char ldap_address[INET6_ADDRSTRLEN];
+	char *envp_composeodj[] = {"PASSWD_FD=0", NULL};
+	char *argv_composeodj[] = {
+		NULL,
+		"offlinejoin",
+		"composeodj",
+		dns_domain_name,
+		netbios_domain_name,
+		domain_sid,
+		domain_guid,
+		forest_name,
+		machine_account_name,
+		dc_name,
+		dc_address,
+		"printblob",
+		NULL};
+	char *argv_requestodj[] = {
+		NULL,
+		"offlinejoin",
+		"requestodj",
+		"-i",
+		NULL};
+	uint8_t *compose_out_data = NULL;
+	size_t compose_out_data_len = 0;
+	uint8_t *request_out_data = NULL;
+	size_t request_out_data_len = 0;
+
+        argv_composeodj[0] = (char *)adcli_enroll_get_samba_data_tool(enroll);
+        if (argv_composeodj[0] == NULL) {
+                _adcli_err("Samba data tool not available.");
+                return ADCLI_ERR_FAIL;
+        }
+        argv_requestodj[0] = argv_composeodj[0];
+
+	ret = adcli_sockaddr_to_string(adcli_conn_get_ldap_address(enroll->conn),
+				ldap_address, sizeof(ldap_address));
+	if (ret != ADCLI_SUCCESS) {
+		return ret;
+	}
+
+	ret = snprintf(dns_domain_name, sizeof(dns_domain_name), "--realm=%s",
+		adcli_conn_get_domain_name(enroll->conn));
+	CHECK_SNPRINTF(ret, dns_domain_name);
+
+	ret = snprintf(netbios_domain_name, sizeof(netbios_domain_name),
+		"--workgroup=%s", adcli_conn_get_domain_short(enroll->conn));
+	CHECK_SNPRINTF(ret, netbios_domain_name);
+
+	ret = snprintf(domain_sid, sizeof(domain_sid), "domain_sid=%s",
+		adcli_conn_get_domain_sid(enroll->conn));
+	CHECK_SNPRINTF(ret, domain_sid);
+
+	ret = snprintf(domain_guid, sizeof(domain_guid), "domain_guid=%s",
+		adcli_conn_get_domain_guid(enroll->conn));
+	CHECK_SNPRINTF(ret, domain_guid);
+
+	ret = snprintf(forest_name, sizeof(forest_name), "forest_name=%s",
+		adcli_conn_get_forest_name(enroll->conn));
+	CHECK_SNPRINTF(ret, forest_name);
+
+	ret = snprintf(machine_account_name, sizeof(machine_account_name),
+		"--user=%s", enroll->computer_sam);
+	CHECK_SNPRINTF(ret, machine_account_name);
+
+	ret = snprintf(dc_name, sizeof(dc_name), "--server=%s",
+		adcli_conn_get_domain_controller(enroll->conn));
+	CHECK_SNPRINTF(ret, dc_name);
+
+	ret = snprintf(dc_address, sizeof(dc_address), "--ipaddress=%s",
+		ldap_address);
+	CHECK_SNPRINTF(ret, dc_address);
+
+	_adcli_info("Trying to compose Samba ODJ blob.");
+	ret = _adcli_call_external_program(argv_composeodj[0],
+				    argv_composeodj, envp_composeodj,
+				    enroll->computer_password,
+				    &compose_out_data, &compose_out_data_len);
+	if (ret != ADCLI_SUCCESS) {
+		while (compose_out_data && compose_out_data_len > 0 &&
+			compose_out_data[compose_out_data_len - 1] == '\n') {
+			compose_out_data_len--;
+		}
+		_adcli_err("Failed to compose Samba ODJ blob: %.*s",
+			(int)compose_out_data_len, (char *)compose_out_data);
+		goto out;
+        }
+
+	if (compose_out_data == NULL || compose_out_data_len == 0) {
+		_adcli_err("Failed to compose ODJ blob, no data returned.");
+		ret = ADCLI_ERR_FAIL;
+		goto out;
+	}
+
+	_adcli_info("Trying to request Samba ODJ.");
+	ret = _adcli_call_external_program(argv_requestodj[0],
+				    argv_requestodj, NULL,
+				    (const char *)compose_out_data,
+				    &request_out_data, &request_out_data_len);
+	if (ret != ADCLI_SUCCESS) {
+		while (request_out_data && request_out_data_len > 0 &&
+			request_out_data[request_out_data_len - 1] == '\n') {
+			request_out_data_len--;
+		}
+		_adcli_err("Failed to request Samba ODJ: %.*s",
+			(int)request_out_data_len, request_out_data);
+		goto out;
+	}
+
+	ret = ADCLI_SUCCESS;
+out:
+	if (compose_out_data != NULL) {
+		/* Burn memory, the blob contains the machine password */
+		memset(compose_out_data, 0, compose_out_data_len);
+		free(compose_out_data);
+	}
+	if (request_out_data != NULL) {
+		free(request_out_data);
+	}
+
+	return ret;
+}
+
+#else /* defined(SAMBA_NETAPI_HAS_COMPOSEODJ) */
 
 static adcli_result
 update_samba_data (adcli_enroll *enroll)
@@ -2384,14 +2697,14 @@ update_samba_data (adcli_enroll *enroll)
 		_adcli_info ("Trying to set domain SID %s for Samba.",
 		             argv_sid[2]);
 		ret = _adcli_call_external_program (argv_sid[0], argv_sid,
-		                                    NULL, NULL, NULL);
+		                                    NULL, NULL, NULL, NULL);
 		if (ret != ADCLI_SUCCESS) {
 			_adcli_err ("Failed to set Samba domain SID.");
 		}
 	}
 
 	_adcli_info ("Trying to set Samba secret.");
-	ret = _adcli_call_external_program (argv_pw[0], argv_pw,
+	ret = _adcli_call_external_program (argv_pw[0], argv_pw, NULL,
 	                                    enroll->computer_password, NULL, NULL);
 	if (ret != ADCLI_SUCCESS) {
 		_adcli_err ("Failed to set Samba computer account password.");
@@ -2399,6 +2712,8 @@ update_samba_data (adcli_enroll *enroll)
 
 	return ret;
 }
+
+#endif
 
 static void
 enroll_clear_state (adcli_enroll *enroll)
@@ -2461,6 +2776,22 @@ enroll_clear_state (adcli_enroll *enroll)
 }
 
 adcli_result
+adcli_enroll_prepare_names (adcli_enroll *enroll)
+{
+	adcli_result res = ADCLI_SUCCESS;
+
+	return_unexpected_if_fail (enroll != NULL);
+
+	adcli_clear_last_error ();
+
+	res = ensure_host_fqdn (res, enroll);
+	res = ensure_computer_name (res, enroll);
+	res = ensure_computer_sam (res, enroll);
+
+	return res;
+}
+
+adcli_result
 adcli_enroll_prepare (adcli_enroll *enroll,
                       adcli_enroll_flags flags)
 {
@@ -2472,17 +2803,14 @@ adcli_enroll_prepare (adcli_enroll *enroll,
 
 	if (enroll->is_service) {
 		/* Ensure basic params for service accounts */
-		res = ensure_host_fqdn (res, enroll);
-		res = ensure_computer_name (res, enroll);
-		res = ensure_computer_sam (res, enroll);
+		res = adcli_enroll_prepare_names (enroll);
 		res = ensure_computer_password (res, enroll);
 		res = ensure_host_keytab (res, enroll);
+		res = ensure_service_principals (res, enroll);
 		res = ensure_keytab_principals (res, enroll);
 	} else {
 		/* Basic discovery and figuring out enroll params */
-		res = ensure_host_fqdn (res, enroll);
-		res = ensure_computer_name (res, enroll);
-		res = ensure_computer_sam (res, enroll);
+		res = adcli_enroll_prepare_names (enroll);
 		res = ensure_user_principal (res, enroll);
 		res = ensure_computer_password (res, enroll);
 		if (!(flags & ADCLI_ENROLL_NO_KEYTAB))
@@ -2496,13 +2824,16 @@ adcli_enroll_prepare (adcli_enroll *enroll,
 }
 
 static adcli_result
-add_server_side_service_principals (adcli_enroll *enroll)
+add_server_side_service_principals (adcli_enroll *enroll,
+                                    adcli_enroll_flags *flags)
 {
 	char **spn_list;
 	LDAP *ldap;
 	size_t c;
 	int length = 0;
 	adcli_result res;
+	char *tmp_str;
+	char **tmp_list;
 
 	ldap = adcli_conn_get_ldap_connection (enroll->conn);
 	assert (ldap != NULL);
@@ -2520,11 +2851,23 @@ add_server_side_service_principals (adcli_enroll *enroll)
 	for (c = 0; spn_list[c] != NULL; c++) {
 		_adcli_info ("Checking %s", spn_list[c]);
 		if (!_adcli_strv_has_ex (enroll->service_principals_to_remove, spn_list[c], strcasecmp)) {
-			enroll->service_principals = _adcli_strv_add_unique (enroll->service_principals,
-			                                                     strdup (spn_list[c]),
-			                                                     &length, false);
-			assert (enroll->service_principals != NULL);
-			_adcli_info ("   Added %s", spn_list[c]);
+			if (_adcli_strv_has_ex (enroll->service_principals, spn_list[c], strcasecmp) == 0) {
+				tmp_str = strdup (spn_list[c]);
+				if (tmp_str == NULL) {
+					_adcli_err ("Failed to copy service principal name.");
+					return ADCLI_ERR_UNEXPECTED;
+				}
+				tmp_list = _adcli_strv_add (enroll->service_principals,
+				                            tmp_str, &length);
+				if (tmp_list == NULL) {
+					free (tmp_str);
+					_adcli_err ("Failed to extend service principal list.");
+					return ADCLI_ERR_UNEXPECTED;
+				}
+				enroll->service_principals = tmp_list;
+				_adcli_info ("   Added %s", spn_list[c]);
+				*flags &= ~ADCLI_ENROLL_NO_KEYTAB;
+			}
 		}
 	}
 	_adcli_strv_free (spn_list);
@@ -2571,16 +2914,21 @@ enroll_join_or_update_tasks (adcli_enroll *enroll,
 			return res;
 	}
 
-	/* kvno is not needed if no keytab */
-	if (flags & ADCLI_ENROLL_NO_KEYTAB)
-		enroll->kvno = -1;
-
 	/* Get information about the computer account if needed */
 	if (enroll->computer_attributes == NULL) {
 		res = retrieve_computer_account (enroll);
 		if (res != ADCLI_SUCCESS)
 			return res;
 	}
+
+	res = add_server_side_service_principals (enroll, &flags);
+	if (res != ADCLI_SUCCESS) {
+		return res;
+	}
+
+	/* kvno is not needed if no keytab */
+	if (flags & ADCLI_ENROLL_NO_KEYTAB)
+		enroll->kvno = -1;
 
 	/* Handle kvno changes for read-only domain controllers (RODC) */
 	if (!adcli_conn_is_writeable (enroll->conn) && old_kvno != -1 &&
@@ -2594,11 +2942,6 @@ enroll_join_or_update_tasks (adcli_enroll *enroll,
 	/* We ignore failures of setting these fields */
 	update_and_calculate_enctypes (enroll);
 	update_computer_account (enroll);
-
-	res = add_server_side_service_principals (enroll);
-	if (res != ADCLI_SUCCESS) {
-		return res;
-	}
 
 	/* service_names is only set from input on the command line, so no
 	 * additional check for explicit is needed here */
@@ -2618,9 +2961,9 @@ enroll_join_or_update_tasks (adcli_enroll *enroll,
 	if ( (flags & ADCLI_ENROLL_ADD_SAMBA_DATA) && ! (flags & ADCLI_ENROLL_PASSWORD_VALID)) {
 		res = update_samba_data (enroll);
 		if (res != ADCLI_SUCCESS) {
-			_adcli_info ("Failed to add Samba specific data, smbd "
+			_adcli_warn ("Failed to add Samba specific data, smbd "
 			             "or winbindd might not work as "
-			             "expected.\n");
+			             "expected.");
 		}
 	}
 
@@ -2765,7 +3108,7 @@ adcli_enroll_read_computer_account (adcli_enroll *enroll,
 	if (res != ADCLI_SUCCESS)
 		return res;
 
-	res = adcli_enroll_prepare (enroll, flags);
+	res = adcli_enroll_prepare_names (enroll);
 	if (res != ADCLI_SUCCESS)
 		return res;
 
@@ -2785,7 +3128,12 @@ adcli_enroll_read_computer_account (adcli_enroll *enroll,
 	}
 
 	/* Get information about the computer account */
-	return retrieve_computer_account (enroll);
+	res = retrieve_computer_account (enroll);
+	if (res != ADCLI_SUCCESS) {
+		return res;
+	}
+
+	return adcli_enroll_prepare (enroll, flags);
 }
 
 adcli_result
@@ -2820,11 +3168,6 @@ adcli_enroll_update (adcli_enroll *enroll,
 		flags |= ADCLI_ENROLL_PASSWORD_VALID;
 	}
 	free (value);
-
-	/* We only support password changes for service accounts */
-	if (enroll->is_service && (flags & ADCLI_ENROLL_PASSWORD_VALID)) {
-		return ADCLI_SUCCESS;
-	}
 
 	return enroll_join_or_update_tasks (enroll, flags);
 }
@@ -2898,7 +3241,7 @@ adcli_enroll_delete (adcli_enroll *enroll,
 		}
 	}
 
-	return delete_computer_account (enroll, ldap);
+	return delete_computer_account (enroll, ldap, delete_flags);
 }
 
 adcli_result
