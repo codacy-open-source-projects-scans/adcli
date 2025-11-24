@@ -2775,7 +2775,7 @@ enroll_clear_state (adcli_enroll *enroll)
 	}
 }
 
-adcli_result
+static adcli_result
 adcli_enroll_prepare_names (adcli_enroll *enroll)
 {
 	adcli_result res = ADCLI_SUCCESS;

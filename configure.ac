@@ -1,7 +1,7 @@
 AC_PREREQ([2.61])
 
 AC_INIT([adcli],
-	[0.9.2],
+	[0.9.3],
 	[https://gitlab.freedesktop.org/realmd/adcli/issues/new],
 	[adcli],
 	[https://gitlab.freedesktop.org/realmd/adcli])
