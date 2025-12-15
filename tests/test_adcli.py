@@ -169,7 +169,7 @@ def test_adcli_testjoin(client: Client, provider: GenericADProvider):
     )
     assert testjoin.rc == 0, "client-join is not valid!"
     assert re.findall(
-        rf"Sucessfully validated join to domain {provider.host.domain}", testjoin.stdout, re.IGNORECASE
+        rf"Successfully validated join to domain {provider.host.domain}", testjoin.stdout, re.IGNORECASE
     ), "Failed to validate join to domain!"
 
 
@@ -315,7 +315,7 @@ def test_adcli_testjoin_client_with_different_domainname(client: Client, provide
 
     assert testjoin_command.rc == 0, "adcli testjoin does not detect domain name correctly!"
     assert re.search(
-        rf"Sucessfully validated join to domain.*{provider.host.domain}",
+        rf"Successfully validated join to domain.*{provider.host.domain}",
         testjoin_command.stdout,
         re.IGNORECASE,
     ), "adcli testjoin does not detect domain name correctly!"

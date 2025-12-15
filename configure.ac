@@ -1,7 +1,7 @@
 AC_PREREQ([2.61])
 
 AC_INIT([adcli],
-	[0.9.3],
+	[0.9.3.1],
 	[https://gitlab.freedesktop.org/realmd/adcli/issues/new],
 	[adcli],
 	[https://gitlab.freedesktop.org/realmd/adcli])
@@ -97,9 +97,24 @@ AC_SUBST(LDAP_CFLAGS)
 
 # -------------------------------------------------------------------
 # samba
+AC_ARG_ENABLE([offline-join-support],
+              [AS_HELP_STRING([--disable-offline-join-support],
+                              [do not build support for Samba's offline join feature])],
+              [build_offline_join_support=$enableval],
+              [build_offline_join_support=yes])
+
 
 AC_CHECK_LIB([netapi], [NetComposeOfflineDomainJoin],
-	     [AC_DEFINE(SAMBA_NETAPI_HAS_COMPOSEODJ, 1, [Samba NetApi supports composeodj])])
+             [found_offline_join=yes],
+             [found_offline_join=no])
+
+if test x$build_offline_join_support = xyes && test x$found_offline_join = xno ; then
+        AC_MSG_ERROR([Couldn't build offline join support, Samba version too old or libnatapi devel package is missing])
+fi
+
+if test x$build_offline_join_support = xyes; then
+        AC_DEFINE(SAMBA_NETAPI_HAS_COMPOSEODJ, 1, [Samba NetApi supports composeodj])
+fi
 
 # -------------------------------------------------------------------
 # resolv
@@ -131,12 +146,25 @@ if test "$sasl_invalid" = "yes"; then
 	AC_MSG_ERROR([Couldn't find Cyrus SASL headers])
 fi
 
+
+# --------------------------------------------------------------------
+# SELinux support
+AC_ARG_ENABLE([selinux-support],
+              [AS_HELP_STRING([--disable-selinux-support],
+                              [do not build support for SELinux])],
+              [build_selinux_support=$enableval],
+              [build_selinux_support=yes])
+
 # --------------------------------------------------------------------
 # libselinux
 AC_SUBST(LIBSELINUX_LIBS)
 AC_SUBST(LIBSELINUX_CFLAGS)
 
 PKG_CHECK_MODULES([LIBSELINUX], [libselinux], [found_libselinux=yes], [found_libselinux=no])
+
+if test x$build_selinux_support = xyes && test x$found_libselinux = xno; then
+	AC_MSG_ERROR([Couldn't build SELinux support, libselinux devel packages missing])
+fi
 
 # --------------------------------------------------------------------
 # selinux-policy
@@ -147,9 +175,13 @@ AC_CHECK_FILE([$SELINUX_MAKEFILE],
               [build_selinux=yes],
               [build_selinux=no])
 
-AM_CONDITIONAL(BUILD_SELINUX_POLICY, test x$build_selinux = xyes && test x$found_libselinux = xyes)
+if test x$build_selinux_support = xyes && test x$build_selinux = xno; then
+    AC_MSG_ERROR([Couldn't build SELinux support, SELinux policy devel packages missing])
+fi
 
-if test x$build_selinux = xyes && test x$found_libselinux = xyes; then
+AM_CONDITIONAL(BUILD_SELINUX_POLICY, test x$build_selinux_support = xyes)
+
+if test x$build_selinux_support = xyes; then
     AC_DEFINE(BUILD_SELINUX_POLICY, 1, [whether to build with SELinux support])
 fi
 
@@ -360,6 +392,7 @@ AC_CONFIG_FILES([Makefile
 	doc/version.xml
 	doc/samba_data_tool_path.xml
 	library/Makefile
+	tests/Makefile
 	tools/Makefile
 	selinux/Makefile
 ])
@@ -370,4 +403,6 @@ AC_MSG_NOTICE([build options:
     Debug build:                     $debug_status
     Strict build:                    $strict_status
     Documentation:                   $doc_status
+    SELinux support:                 $build_selinux_support
+    Offline join support:            $build_offline_join_support
 ])

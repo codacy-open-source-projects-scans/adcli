@@ -4,6 +4,7 @@ SUBDIRS = \
 	build \
 	library \
 	selinux \
+	tests \
 	tools
 
 ACLOCAL_AMFLAGS = -I build/m4
