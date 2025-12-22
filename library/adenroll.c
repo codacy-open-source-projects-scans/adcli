@@ -2116,30 +2116,38 @@ ensure_host_keytab (adcli_result res,
 	return ADCLI_SUCCESS;
 }
 
-adcli_result
-ensure_host_keytab_selinux_context (adcli_result res,
-                                    adcli_enroll *enroll)
+void
+restore_host_keytab_selinux_context (adcli_enroll *enroll)
 {
 #ifdef BUILD_SELINUX_POLICY
 	int ret;
-
-	if (res != ADCLI_SUCCESS)
-		return res;
+	krb5_context k5;
+	const char *name_start;
 
 	if (enroll->keytab_name == NULL) {
 		_adcli_info ("No keytab name available, skipping SELinux restorecon.");
-		return ADCLI_SUCCESS;
+		return;
 	}
 
-	ret = selinux_restorecon (adcli_enroll_get_keytab_name (enroll), 0);
+	name_start = enroll->keytab_name;
+	if (strncmp (name_start, "FILE:", 5) == 0) {
+		name_start = enroll->keytab_name + 5;
+	}
+
+	if (enroll->keytab != NULL) {
+		k5 = adcli_conn_get_krb5_context (enroll->conn);
+		krb5_kt_close (k5, enroll->keytab);
+		enroll->keytab = NULL;
+	}
+
+	ret = selinux_restorecon (name_start, 0);
 	if (ret != 0) {
-		_adcli_err ("Failed to set SELinux context for %s with error %d: %s",
-		            enroll->keytab_name, ret, strerror (ret));
-		return ADCLI_ERR_FAIL;
+		_adcli_err ("Failed to set SELinux context for %s with error %d: %s, ignored",
+		            name_start, ret, strerror (errno));
 	}
 #endif
 
-	return ADCLI_SUCCESS;
+	return;
 }
 
 

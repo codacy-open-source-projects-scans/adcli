@@ -192,6 +192,5 @@ void               adcli_enroll_set_samba_data_tool     (adcli_enroll *enroll,
 
 const char *       adcli_enroll_get_samba_data_tool     (adcli_enroll *enroll);
 
-adcli_result        ensure_host_keytab_selinux_context  (adcli_result res,
-                                                         adcli_enroll *enroll);
+void               restore_host_keytab_selinux_context  (adcli_enroll *enroll);
 #endif /* ADENROLL_H_ */
