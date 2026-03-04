@@ -238,6 +238,24 @@ _adcli_strv_has_ex (char **strv,
 	return 0;
 }
 
+int
+_adcli_strv_has_exn (char **strv,
+                     const char *str,
+                     size_t n,
+                     int (* comparen) (const char *match, const char *value, size_t n))
+{
+	int i;
+
+	for (i = 0; strv && strv[i] != NULL; i++) {
+		if (strlen(strv[i]) == n &&
+			comparen (strv[i], str, n) == 0) {
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
 char **
 _adcli_strv_add_unique (char **strv,
                         char *string,

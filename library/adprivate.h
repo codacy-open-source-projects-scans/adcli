@@ -138,6 +138,11 @@ int            _adcli_strv_has_ex            (char **strv,
                                               const char *str,
                                               int (* compare) (const char *match, const char*value));
 
+int            _adcli_strv_has_exn           (char **strv,
+                                              const char *str,
+                                              size_t n,
+                                              int (* comparen) (const char *match, const char *value, size_t n));
+
 char **        _adcli_strv_dup               (char **strv) GNUC_WARN_UNUSED;
 
 char *         _adcli_strv_join              (char **strv,

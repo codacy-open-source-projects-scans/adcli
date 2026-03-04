@@ -3958,7 +3958,8 @@ static int comp_attr_name (const char *s1, const char *s2)
 adcli_result
 adcli_enroll_add_setattr (adcli_enroll *enroll, const char *value)
 {
-	char *delim;
+	const char *delim = NULL;
+	size_t n = 0;
 
 	return_val_if_fail (enroll != NULL, ADCLI_ERR_CONFIG);
 	return_val_if_fail (value != NULL, ADCLI_ERR_CONFIG);
@@ -3974,12 +3975,11 @@ adcli_enroll_add_setattr (adcli_enroll *enroll, const char *value)
 		return ADCLI_ERR_CONFIG;
 	}
 
-	*delim = '\0';
-	if (_adcli_strv_has_ex (default_ad_ldap_attrs, value, strcasecmp) == 1) {
+	n = delim - value;
+	if (_adcli_strv_has_exn (default_ad_ldap_attrs, value, n, strncasecmp) == 1) {
 		_adcli_err ("Attribute [%s] cannot be set with setattr", value);
 		return ADCLI_ERR_CONFIG;
 	}
-	*delim = '=';
 
 	if (_adcli_strv_has_ex (enroll->setattr, value, comp_attr_name) == 1) {
 		_adcli_err ("Attribute [%s] already set", value);

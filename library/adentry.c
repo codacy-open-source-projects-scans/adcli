@@ -605,7 +605,7 @@ user_entry_builder (adcli_entry *entry,
 
 static bool check_name (const char *name, const char *illegal_characters)
 {
-	char *c;
+	const char *c;
 
 	if ( (c = strpbrk (name, illegal_characters)) == NULL) {
 		return true;

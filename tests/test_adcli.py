@@ -684,3 +684,590 @@ def test_adcli_after_join_show_details(client: Client, provider: GenericADProvid
     assert re.findall(
         r"\[keytab\]\nkvno = [0-9]+\nkeytab = FILE:/etc/krb5.keytab", j.stdout, re.IGNORECASE
     ), "adcli stdout failed to show computer information!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_add_details_at_join(client: Client, provider: GenericADProvider):
+    """
+    :title: add details in computer account at joining
+    :steps:
+        1. At joining, add details about OS, OS version, OS service pack, short-description, the client to a AD-domain
+    :expectedresults:
+        1. After join, computer account wil show added details in computer account
+    """
+    args = ["--verbose"]
+    details = {
+        "--os-name": "linux",
+        "--os-service-pack": "99",
+        "--os-version": "10",
+        "--description": "Set during joining",
+    }
+    output = {
+        "operatingSystem": "linux",
+        "operatingSystemVersion": "10",
+        "operatingSystemServicePack": "99",
+        "description": "Set During joining",
+    }
+
+    for i, j in details.items():
+        args.append(f"{i}={j}")
+
+    k = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=args,
+        krb=False,
+    )
+
+    assert k.rc == 0, "adcli failed to join the client!"
+
+    s = client.adcli.show_computer(
+        domain=provider.host.domain,
+        args=["--login-user", "Administrator", "--verbose"],
+        login_user="Administrator",
+        krb=False,
+        password=provider.host.adminpw,
+    )
+    assert s.rc == 0, "adcli failed to show the client details!"
+
+    for attribute, value in output.items():
+        assert re.findall(
+            rf"{attribute}:\n {value}", s.stdout, re.IGNORECASE
+        ), f"{attribute} Details added at join not reflected!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+@pytest.mark.parametrize("expire_value", ["Yes", "No", "True", "False"])
+def test_adcli_control_machine_account_passwd_expiry(client: Client, provider: GenericADProvider, expire_value: str):
+    """
+    :title: Control machin account password expiry
+    :steps:
+        1. At joininig, add dont-expire-password with values
+    :expectedresults:
+        1. After join, computer account password attribute would show correct details
+    """
+
+    j = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--dont-expire-password={expire_value}"],
+        krb=False,
+    )
+
+    assert j.rc == 0, "adcli failed to join the client!"
+
+    s = client.adcli.show_computer(
+        domain=provider.host.domain,
+        args=["--login-user", "Administrator", "--verbose"],
+        login_user="Administrator",
+        krb=False,
+        password=provider.host.adminpw,
+    )
+    assert s.rc == 0, "adcli failed to show the client details!"
+
+    uac_match = re.search(r"userAccountControl:\s*(\d+)", s.stdout)
+
+    uac_value = int(uac_match.group(1))
+
+    # 4. Bitwise Verification
+    # Check if the "Don't Expire" bit is set
+    # 0x10000 = ADS_UF_DONT_EXPIRE_PASSWD
+    ads_uf_dont_expire_passwd = 0x10000
+    is_flag_set = (uac_value & ads_uf_dont_expire_passwd) == ads_uf_dont_expire_passwd
+
+    if expire_value in ("True", "Yes"):
+        assert is_flag_set, (
+            f"Failure: Password should NOT expire, but 'ads_uf_dont_expire_passwd' (0x10000) is MISSING.\n"
+            f"UAC Value: {uac_value}"
+        )
+    else:
+        assert not is_flag_set, (
+            f"Failure: Password should expire, but 'ads_uf_dont_expire_passwd' (0x10000) is SET.\n"
+            f"UAC Value: {uac_value}"
+        )
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_show_password_at_join(client: Client, provider: GenericADProvider):
+    """
+    :title: After join, show computer account password
+    :steps:
+        1. Run join operation with `--show-password`.
+    :expectedresults:
+        1. Successful adcli join output should show computer account password.
+    """
+    j = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", "--show-password"],
+        krb=False,
+    )
+
+    assert j.rc == 0, "adcli failed to join the client!"
+
+    assert re.findall(
+        r"\[computer\]\ncomputer-password = .*", j.stdout, re.IGNORECASE
+    ), "computer account password at join not reflected!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_user_principal_at_join(client: Client, provider: GenericADProvider):
+    """
+    :title: At join, set computer's kerberos principal with userPrincipal.
+    :steps:
+        1. Run join operation with `--userPrincipal` with value.
+    :expectedresults:
+        1. Successful adcli join should set computer kerberos principal as per userPrincipalName.
+    """
+    j = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--user-principal=host/setatjoin@{provider.host.domain.upper()}"],
+        krb=False,
+    )
+
+    assert j.rc == 0, "adcli failed to join the client!"
+
+    klist = client.host.conn.exec(
+        ["klist", "-kt"],
+        raise_on_error=True,
+    )
+    assert re.findall(
+        rf"host/setatjoin@{provider.host.domain.upper()}", klist.stdout, re.IGNORECASE
+    ), "userPrincipal value not set!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_join_hostname_length(client: Client, provider: GenericADProvider):
+    """
+    :title: Join a client having hostname length 19-character or more
+    :setup:
+        1. Set client hostname to 19-character length.
+    :steps:
+        1. Run join
+    :expectedresults:
+        1. Join operation should truncate hostname to required length and succeed.
+    """
+    u = str(uuid.uuid4())[:20]
+    new_hostname = f"client-{u}.{provider.host.domain}"
+
+    client.hostnameutils.name = new_hostname
+    assert client.hostnameutils.name == new_hostname
+
+    j = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose"],
+        krb=False,
+    )
+
+    assert j.rc == 0, "adcli failed to join the client!"
+    assert re.findall(
+        rf"Truncated computer account name from fqdn: {new_hostname[:15].upper()}", j.stderr, re.IGNORECASE
+    ), "adcli join failed!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_preset_reset_computer(client: Client, provider: GenericADProvider):
+    """
+    :title: Preset reset a computer account in AD
+    :steps:
+        1. Preset a computer account in AD with --one-time-password value
+        2. Join client with --one-time-password authentication
+        3. Reset a computer account in AD
+        4. Delete the computer account in AD
+    :expectedresults:
+        1. A computer account be created in AD
+        2. Join operation should succeed with --one-time-password  value
+        3. A computer account will be reset in AD
+        4. Computer object deleted from AD
+    """
+
+    j = client.adcli.preset_computer(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", "--one-time-password", "redhat", client.host.hostname],
+        krb=False,
+    )
+
+    assert j.rc == 0, "adcli failed to preset the client!"
+
+    assert re.findall(r"Created computer account", j.stderr, re.IGNORECASE), "adcli preset failed!"
+
+    join_cmd = client.host.conn.exec(
+        ["adcli", "join", "--verbose", "--one-time-password", "redhat", f"--domain={provider.host.domain}"]
+    )
+
+    z = client.adcli.reset_computer(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", client.host.hostname],
+        krb=False,
+    )
+
+    assert z.rc == 0, "adcli failed to join the client!"
+
+    delete_computer = client.adcli.delete_computer(
+        domain=f"{provider.host.domain}",
+        args=["--login-user", "Administrator", "--verbose"],
+        krb=False,
+        login_user="Administrator",
+        password=provider.host.adminpw,
+    )
+
+    assert re.findall(
+        r"Deleted computer account at", delete_computer.stderr, re.IGNORECASE
+    ), "adcli showing computer info!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_msa_service_principal(client: client, provider: genericadprovider):
+    """
+    :title: adcli msa add service principal
+    :description: adcli add service principal msa
+    :setup:
+        1. join client to ad.
+    :steps:
+        1. create msa account
+    :expectedresults:
+        1. account is created
+    """
+    client.realm.join(provider.host.domain, krb=False, user=provider.host.adminuser, password=provider.host.adminpw)
+    msa = client.adcli.create_msa(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        args=["--verbose"],
+        krb=False,
+        password=provider.host.adminpw,
+    )
+    assert msa.rc == 0, "managed service account is not created!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_update_description(client: Client, provider: GenericADProvider):
+    """
+    :title: adcli update computer description
+    :description: Join domain with a description, then update it using 'adcli update'.
+    :setup:
+        1. Join the client to the AD domain with an initial description.
+    :steps:
+        1. Verify the initial description using 'adcli show-computer'.
+        2. Run 'adcli update' with a new '--description'.
+        3. Verify the new description using 'adcli show-computer'.
+    :expectedresults:
+        1. Initial description is set correctly.
+        2. Update command succeeds.
+        3. New description is updated in AD.
+    """
+    initial_desc = "during join"
+    new_desc = "chagneddd"
+
+    # 1. Join with initial description
+    join_cmd = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--description={initial_desc}"],
+        krb=False,
+    )
+    assert join_cmd.rc == 0, f"adcli join failed: {join_cmd.stderr}"
+    # client.realm.join(provider.host.domain, krb=False, user=provider.host.adminuser, password=provider.host.adminpw)
+
+    # 2. Verify initial description
+    show_cmd_1 = client.adcli.show_computer(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose"],
+        krb=False,
+    )
+    assert show_cmd_1.rc == 0, f"adcli show-computer failed: {show_cmd_1.stderr}"
+
+    # 3. Update description using machine credentials (implicit keytab auth)
+    update_cmd = client.adcli.update(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--description={new_desc}"],
+    )
+    assert update_cmd.rc == 0, f"adcli update failed: {update_cmd.stderr}"
+    # 4. Verify new description
+    show_cmd_2 = client.adcli.show_computer(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose"],
+        krb=False,
+    )
+    assert show_cmd_2.rc == 0, f"adcli show-computer failed: {show_cmd_2.stderr}"
+    output_2 = show_cmd_2.stdout + show_cmd_2.stderr
+    assert re.search(
+        rf"description:\n.*{new_desc}", output_2, re.IGNORECASE
+    ), f"New description '{new_desc}' not found in computer details."
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_update_msa_service_principal(client: client, provider: genericadprovider):
+    """
+    :title: adcli update msa add service principal
+    :description: adcli update add service principal msa
+    :setup:
+        1. join client to ad.
+        2. create msa account
+    :steps:
+        1. update a service principal of msa account
+    :expectedresults:
+        1. service principal is updated
+    """
+    msa = client.adcli.create_msa(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        args=["--verbose"],
+        krb=False,
+        password=provider.host.adminpw,
+    )
+    assert msa.rc == 0, "managed service account is not created!"
+
+    update_cmd = client.adcli.update(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=[
+            "--verbose",
+            f"--add-service-principal=HTTPD/{provider.host.domain}",
+            f"--host-keytab=/etc/krb5.keytab.{provider.host.domain}",
+        ],
+    )
+    assert update_cmd.rc == 0, f"adcli update failed: {update_cmd.stderr}"
+    output = update_cmd.stdout + update_cmd.stderr
+    assert re.search(rf"HTTPD/{provider.host.domain}", output, re.IGNORECASE), "service principal not updated!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_create_msa_with_correct_selinux(client: Client, provider: GenericADProvider):
+    """
+    :title: adcli create-msa create keytab with correct seliux context
+    :setup:
+        1. Join the domain.
+    :steps:
+        1. Create a Managed Service Account (MSA) using adcli.
+        2. Verify the MSA keytab is created and has correct SELinux context.
+        3. Verify adcli update works using the new host keytab.
+    :expectedresults:
+        1. MSA created successfully
+        2. keytab is created with correct selinux context
+        3. adcli update works with new host keytab
+    """
+    s = client.host.conn.exec(["getenforce"], raise_on_error=False)
+    if s.rc != 0:
+        pytest.skip("getenforce command is not available or failed. Skipping the test!")
+    elif "Disabled" in s.stdout:
+        pytest.skip("SELinux is disabled on client host. Skipping the test!")
+    join_result = client.realm.join(
+        domain=provider.host.domain,
+        user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", "--client-software=sssd", "--membership-software=adcli"],
+        krb=False,
+    )
+    assert join_result.rc == 0, f"Join failed: {join_result.stderr}"
+
+    msa_keytab_path = f"/etc/krb5.keytab.{provider.host.domain}"
+
+    client.adcli.create_msa(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose"],
+        krb=False,
+    )
+
+    assert client.host.fs.exists(msa_keytab_path), f"MSA Keytab file {msa_keytab_path} was not created."
+
+    ls_cmd = client.host.conn.exec(["ls", "-lZ", msa_keytab_path])
+    assert (
+        "krb5_keytab_t" in ls_cmd.stdout
+    ), f"SELinux context incorrect for {msa_keytab_path}.\nOutput: {ls_cmd.stdout}"
+
+    update_cmd = client.adcli.update(
+        domain=provider.host.domain,
+        args=["--verbose", f"--host-keytab={msa_keytab_path}"],
+    )
+
+    assert update_cmd.rc == 0, f"adcli update failed using the new MSA keytab!\n" f"Stderr: {update_cmd.stderr}"
+    ls_upd = client.host.conn.exec(["ls", "-lZ", msa_keytab_path])
+    assert (
+        "krb5_keytab_t" in ls_upd.stdout
+    ), f"SELinux context incorrect for {msa_keytab_path}.\nOutput: {ls_cmd.stdout}"
+
+
+def get_max_kvno(klist_output: str, principal_match: str) -> int:
+    """
+    Helper function to extract the highest KVNO for a specific principal
+    from 'klist -kt' output.
+    """
+    kvnos = []
+    # klist -kt output format typically looks like:
+    #    4 12/24/2025 00:31:01 host/cli1.test.qe@TEST.QE
+    for line in klist_output.splitlines():
+        if principal_match in line:
+            # Match the first integer at the beginning of the line
+            match = re.match(r"^\s*(\d+)\s+", line)
+            if match:
+                kvnos.append(int(match.group(1)))
+
+    return max(kvnos) if kvnos else -1
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_update_increment_kvno(client: Client, provider: GenericADProvider):
+    """
+    :title: Verify adcli update increments KVNO using explicit --host-fqdn
+    :setup:
+        1. Join the domain to establish initial keytab.
+    :steps:
+        1. Read initial KVNO from the keytab.
+        2. Run 'adcli update' specifying the --host-fqdn parameter.
+        3. Read new KVNO from the keytab
+    :expectedresults:
+        1. Successfully read KVNO from the keytab.
+        2. Successfully executed adcli
+        4. New KVNO from the keytab has incremented.
+    """
+    # 1. Join Domain (Creates initial /etc/krb5.keytab)
+    join_result = client.realm.join(
+        domain=provider.host.domain,
+        user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", "--client-software=sssd", "--membership-software=adcli"],
+        krb=False,
+    )
+    assert join_result.rc == 0, f"Join failed: {join_result.stderr}"
+
+    # 2. Get Initial KVNO
+    host_principal = f"host/{client.host.hostname}"
+
+    klist_initial = client.host.conn.exec(["klist", "-kt"])
+    assert klist_initial.rc == 0, "Failed to read initial keytab with klist"
+
+    initial_kvno = get_max_kvno(klist_initial.stdout, host_principal)
+    assert initial_kvno != -1, f"Could not find principal {host_principal} in initial keytab"
+
+    # 3. Run adcli update with --host-fqdn
+    update_cmd = client.adcli.update(
+        domain=provider.host.domain,
+        args=["--verbose", f"--host-fqdn={client.host.hostname}", "--computer-password-lifetime=0"],
+    )
+
+    # 4. Assert Update Success
+    assert update_cmd.rc == 0, (
+        f"adcli update failed!\n" f"Return Code: {update_cmd.rc}\n" f"Stderr: {update_cmd.stderr}"
+    )
+
+    # 5. Get New KVNO and Verify Increment
+    klist_updated = client.host.conn.exec(["klist", "-kt"])
+    assert klist_updated.rc == 0, "Failed to read updated keytab with klist"
+
+    new_kvno = get_max_kvno(klist_updated.stdout, host_principal)
+    assert new_kvno != -1, f"Could not find principal {host_principal} in updated keytab"
+
+    # Assert that the KVNO has strictly increased
+    assert new_kvno > initial_kvno, (
+        f"KVNO did not increment after adcli update! " f"Initial: {initial_kvno}, New: {new_kvno}"
+    )
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_update_with_host_fqdn(client: Client, provider: GenericADProvider):
+    """
+    :title: Verify adcli update using explicit --host-fqdn
+    :setup:
+        1. Join the domain to establish initial keytab.
+    :steps:
+        1. Run 'adcli update' specifying the --host-fqdn
+        2. Verify the keytab is valid and contains principals.
+    :expectedresults:
+        1. adcli command executes correctly
+        2. keytab shows host principal correctly
+    """
+
+    join_result = client.realm.join(
+        domain=provider.host.domain,
+        user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose"],
+    )
+    assert join_result.rc == 0, f"Join failed: {join_result.stderr}"
+
+    update_cmd = client.adcli.update(
+        domain=provider.host.domain,
+        args=["--verbose", f"--host-fqdn={client.host.hostname}"],
+    )
+
+    assert update_cmd.rc == 0, (
+        f"adcli update failed!\n" f"Return Code: {update_cmd.rc}\n" f"Stderr: {update_cmd.stderr}"
+    )
+
+    # 4. Verify Keytab
+    klist_cmd = client.host.conn.exec(["klist", "-kt"])
+    assert klist_cmd.rc == 0, "Failed to read keytab with klist"
+
+    # Verify we see the host principal (e.g., host/cli1.test.qe)
+    assert f"host/{client.host.hostname}" in klist_cmd.stdout, "Keytab does not contain the expected host principal"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_update_service_principal(client: Client, provider: GenericADProvider):
+    """
+    :title: adcli update to add service principal in keytab
+    :setup:
+        1. Join the client to a AD-domain
+    :steps:
+        1. Add a service principal in keytab
+    :expectedresults:
+        1. A keytab contains added service principal
+    """
+    join_command = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        args=["--verbose"],
+        krb=False,
+        password=provider.host.adminpw,
+    )
+    short_hostname = client.host.hostname.split(".")[0].upper()
+    assert join_command.rc == 0, "adcli failed to join the client!"
+
+    update_cmd = client.adcli.update(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=[
+            "--verbose",
+            f"--add-service-principal=HTTPD/{provider.host.domain}",
+            "--host-keytab=/etc/krb5.keytab",
+            short_hostname,
+        ],
+    )
+    assert update_cmd.rc == 0, f"adcli update failed: {update_cmd.stderr}"
+    output = update_cmd.stdout + update_cmd.stderr
+    assert re.search(rf"HTTPD/{provider.host.domain}", output, re.IGNORECASE), "service principal not updated!"
