@@ -65,6 +65,7 @@ class ADTopologyController(ProvisionedBackupTopologyController):
         # Remove any existing Kerberos configuration and keytab
         client.fs.rm("/etc/krb5.conf")
         client.fs.rm("/etc/krb5.keytab")
+        client.fs.write("/etc/krb5.conf", "")
 
         # Backup so we can restore to this state after each test
         super().topology_setup()
@@ -75,4 +76,16 @@ class SambaTopologyController(ADTopologyController):
     Samba Topology Controller.
     """
 
-    pass
+    @BackupTopologyController.restore_vanilla_on_error
+    def topology_setup(self, client: ClientHost, provider: SambaHost) -> None:
+        if self.provisioned:
+            self.logger.info(f"Topology '{self.name}' is already provisioned")
+            return
+
+        # Remove any existing Kerberos configuration and keytab
+        client.fs.rm("/etc/krb5.conf")
+        client.fs.rm("/etc/krb5.keytab")
+        client.fs.write("/etc/krb5.conf", "")
+
+        # Backup so we can restore to this state after each test
+        super().topology_setup()

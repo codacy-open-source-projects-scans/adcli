@@ -893,6 +893,15 @@ def test_adcli_preset_reset_computer(client: Client, provider: GenericADProvider
         3. A computer account will be reset in AD
         4. Computer object deleted from AD
     """
+    if provider.role == "samba":
+        d = client.adcli.delete_computer(
+            domain=f"{provider.host.domain}",
+            args=["--login-user", "Administrator", "--verbose"],
+            krb=False,
+            login_user="Administrator",
+            password=provider.host.adminpw,
+        )
+        assert d.rc is not None
 
     j = client.adcli.preset_computer(
         domain=provider.host.domain,
@@ -906,7 +915,7 @@ def test_adcli_preset_reset_computer(client: Client, provider: GenericADProvider
 
     assert re.findall(r"Created computer account", j.stderr, re.IGNORECASE), "adcli preset failed!"
 
-    join_cmd = client.host.conn.exec(
+    client.host.conn.exec(
         ["adcli", "join", "--verbose", "--one-time-password", "redhat", f"--domain={provider.host.domain}"]
     )
 
@@ -935,7 +944,7 @@ def test_adcli_preset_reset_computer(client: Client, provider: GenericADProvider
 
 @pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopologyGroup.AnyAD)
-def test_adcli_msa_service_principal(client: client, provider: genericadprovider):
+def test_adcli_msa_service_principal(client: Client, provider: GenericADProvider):
     """
     :title: adcli msa add service principal
     :description: adcli add service principal msa
@@ -1023,7 +1032,7 @@ def test_adcli_update_description(client: Client, provider: GenericADProvider):
 
 @pytest.mark.importance("critical")
 @pytest.mark.topology(KnownTopologyGroup.AnyAD)
-def test_adcli_update_msa_service_principal(client: client, provider: genericadprovider):
+def test_adcli_update_msa_service_principal(client: Client, provider: GenericADProvider):
     """
     :title: adcli update msa add service principal
     :description: adcli update add service principal msa
@@ -1271,3 +1280,324 @@ def test_adcli_update_service_principal(client: Client, provider: GenericADProvi
     assert update_cmd.rc == 0, f"adcli update failed: {update_cmd.stderr}"
     output = update_cmd.stdout + update_cmd.stderr
     assert re.search(rf"HTTPD/{provider.host.domain}", output, re.IGNORECASE), "service principal not updated!"
+
+
+@pytest.mark.importance("critical")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_aduser_pre_filter_user(client: Client, provider: GenericADProvider):
+    """
+    :title: adcli filter username before create an ADuser
+    :description: adcli filter username before create ADuser
+    :setup:
+        1. Join client to AD.
+    :steps:
+        1. Create AD user having @ in name
+    :expectedresults:
+        1. AD-user is not created
+    """
+    aduser = "aduser@12"
+
+    client.realm.join(provider.host.domain, krb=False, user=provider.host.adminuser, password=provider.host.adminpw)
+
+    c = client.adcli.create_user(
+        aduser,
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        args=["--verbose"],
+        krb=False,
+        password=provider.host.adminpw,
+    )
+    assert c.rc != 0, "Sanity filtering of username before user creation failed!"
+
+
+@pytest.mark.importance("high")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_managedby_attribute(client: Client, provider: GenericADProvider):
+    """
+    :title: Populate and update the managedBy attribute on the computer account
+    :setup:
+        1. Fetch the Base DN dynamically via PowerShell (naming_context).
+        2. Construct valid DNs for Administrator and Guest users.
+    :steps:
+        1. Join the domain using adcli join, passing --setattr=managedBy=<Administrator_DN>.
+        2. Verify the managedBy attribute using native PowerShell on the DC.
+        3. Update the attribute to the Guest user using adcli update.
+        4. Verify the updated attribute using native PowerShell on the DC.
+    """
+    if provider.role == "samba":
+        pytest.skip("Skipping test: NO Powershell on Samba!!")
+    base_dn = provider.host.naming_context
+    admin_dn = f"CN=Administrator,CN=Users,{base_dn}"
+    guest_dn = f"CN=Guest,CN=Users,{base_dn}"
+
+    computer_sam = f"{client.host.hostname.split('.')[0].upper()}$"
+
+    def get_managed_by_pwsh() -> str:
+        cmd = f'Get-ADComputer -Identity "{computer_sam}" -Properties managedBy | Select-Object -ExpandProperty managedBy'
+        result = provider.host.conn.run(cmd)
+
+        assert result.rc == 0, f"Failed to query AD computer: {result.stderr}"
+
+        managed_by = result.stdout.strip()
+        assert managed_by, f"'managedBy' attribute is empty for {computer_sam}."
+        return managed_by
+
+    join_result = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--setattr=managedBy={admin_dn}"],
+        krb=False,
+    )
+    assert join_result.rc == 0, f"Join failed: {join_result.stderr}"
+
+    initial_attr = get_managed_by_pwsh()
+    assert initial_attr.lower() == admin_dn.lower(), f"Expected {admin_dn}, but AD returned {initial_attr}"
+
+    update_result = client.adcli.update(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--setattr=managedBy={guest_dn}"],
+    )
+    assert update_result.rc == 0, f"Update failed: {update_result.stderr}"
+
+    updated_attr = get_managed_by_pwsh()
+    assert updated_attr.lower() == guest_dn.lower(), f"Expected {guest_dn}, but AD returned {updated_attr}"
+
+
+def set_des_key_only_flag(provider: GenericADProvider, computer_sam: str, enable: bool):
+    """
+    Modifies the USE_DES_KEY_ONLY flag (0x200000) on an AD computer account
+    using native PowerShell execution.
+    """
+    if enable:
+        math_op = "-bor 0x200000"
+    else:
+        math_op = "-band (-bnot 0x200000)"
+
+    pwsh_script = f"""
+    $comp = Get-ADComputer -Identity '{computer_sam}' -Properties userAccountControl
+    if (-not $comp) {{
+        Write-Error "Computer {computer_sam} not found in AD."
+        exit 1
+    }}
+
+    $newUAC = $comp.userAccountControl {math_op}
+    Set-ADComputer -Identity '{computer_sam}' -Replace @{{userAccountControl=$newUAC}}
+    """
+    result = provider.host.conn.run(pwsh_script)
+    assert result.rc == 0, f"Failed to modify USE_DES_KEY_ONLY flag: {result.stderr}"
+
+
+@pytest.mark.importance("high")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_resets_des_flag_on_precreated_computer(client: Client, provider: GenericADProvider):
+    """
+    :title: Verify adcli resets the USE_DES_KEY_ONLY flag when joining a pre-created account
+    :setup:
+        1. Calculate the expected computer name and sAMAccountName.
+        2. Pre-create the computer object natively in AD via PowerShell.
+        3. Enable the USE_DES_KEY_ONLY flag on the object.
+    :steps:
+        1. Join the domain using adcli join.
+        2. Query the userAccountControl attribute natively in AD.
+    :expectedresults:
+        1. adcli join reset USE_DES_KEY_ONLY flag of computer.
+        2. The flag USE_DES_KEY_ONLY flag (the 0x200000 bit is 0) on computer object is cleared.
+    """
+    if provider.role == "samba":
+        pytest.skip("Skipping test: NO Powershell on Samba!!")
+    comp_name = client.host.hostname.split(".")[0].upper()
+    computer_sam = f"{comp_name}$"
+
+    setup_script = f"""
+    if (-not (Get-ADComputer -Filter "SamAccountName -eq '{computer_sam}'")) {{
+        New-ADComputer -Name '{comp_name}' -SamAccountName '{computer_sam}'
+    }}
+
+    $comp = Get-ADComputer -Identity '{computer_sam}' -Properties userAccountControl
+    $newUAC = $comp.userAccountControl -bor 0x200000
+    Set-ADComputer -Identity '{computer_sam}' -Replace @{{userAccountControl=$newUAC}}
+
+    # Output the bitwise result to confirm the setup worked
+    ($newUAC -band 0x200000)
+    """
+
+    setup_result = provider.host.conn.run(setup_script)
+    assert setup_result.rc == 0, f"Failed to pre-create AD computer: {setup_result.stderr}"
+    assert setup_result.stdout.strip() == "2097152", "Failed to set DES flag during setup."
+
+    try:
+        join_result = client.adcli.join(
+            domain=provider.host.domain,
+            login_user=provider.host.adminuser,
+            password=provider.host.adminpw,
+            args=["--verbose"],
+            krb=False,
+        )
+        assert join_result.rc == 0, f"adcli join failed: {join_result.stderr}"
+
+        check_script = f"(Get-ADComputer -Identity '{computer_sam}' -Properties userAccountControl).userAccountControl -band 0x200000"
+        check_result = provider.host.conn.run(check_script)
+        assert check_result.rc == 0, f"Failed to query AD after join: {check_result.stderr}"
+
+        assert check_result.stdout.strip() == "0", "adcli failed to reset the USE_DES_KEY_ONLY flag!"
+
+    finally:
+        cleanup_script = f"Remove-ADComputer -Identity '{computer_sam}' -Confirm:$false"
+        provider.host.conn.run(cleanup_script, raise_on_error=False)
+
+
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+@pytest.mark.importance("medium")
+def test_adcli_terminate_ctrl_c_password_prompt(client: Client, provider: GenericADProvider):
+    """
+    :title: Terminate adcli operation using ctrl+c at password prompt
+    :setup:
+        1. Generate an expect script on the client that spawns adcli.
+        2. Wait for the interactive password prompt to appear.
+    :steps:
+        1. Send the ASCII Ctrl+C character (\x03) and exit with custom code 111.
+        2. Assert the script returned 111 (indicating the interrupt was successfully sent).
+    :expectedresults:
+        1. adcli successfully receives the interrupt.
+        2. The expect wrapper exits with our designated success code (111).
+    """
+
+    client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        password=provider.host.adminpw,
+        args=["--verbose", f"--domain-controller={provider.host.domain}"],
+        krb=False,
+    )
+
+    expect_script = f"""#!/usr/bin/expect -f
+set timeout 10
+
+spawn adcli show-computer {provider.host.domain} -S {provider.host.hostname}
+
+expect {{
+    "*Password for *" {{
+        send -- "\\x03"
+        # Give the signal a fraction of a second to kill the process
+        sleep 0.5
+        exit 111
+    }}
+    timeout {{
+        puts stderr "Error: Timed out waiting for the password prompt."
+        exit 1
+    }}
+    eof {{
+        puts stderr "Error: adcli exited before showing the password prompt."
+        # Print exactly what adcli output to the screen before crashing
+        if {{[info exists expect_out(buffer)]}} {{
+            puts stderr "adcli output was: $expect_out(buffer)"
+        }}
+        exit 2
+    }}
+}}
+"""
+    script_path = "/tmp/test_adcli_ctrl_c.exp"
+
+    try:
+        client.host.conn.run(f"cat > {script_path} <<'_EOF'\n{expect_script}\n_EOF")
+        client.host.conn.run(f"chmod +x {script_path}")
+
+        result = client.host.conn.run(script_path, raise_on_error=False)
+
+        assert (
+            result.rc == 111
+        ), f"Failed to interrupt adcli. Expected custom exit code 111, got {result.rc}. Stderr: {result.stderr}"
+
+    finally:
+        client.host.conn.run(f"rm -f {script_path}", raise_on_error=False)
+
+
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+@pytest.mark.importance("medium")
+def test_adcli_terminate_ctrl_c(client: Client, provider: GenericADProvider):
+    """
+    :title: Terminate adcli network discovery using Ctrl+C
+    :steps:
+        1. Execute `adcli info` targeting localhost wrapped in the `timeout` command.
+        2. Configure `timeout` to send a SIGINT (--signal=SIGINT) after 2 seconds.
+        3. Capture the exit code of the terminated process.
+    :expectedresults:
+        1. The adcli process terminates cleanly upon receiving the signal.
+        2. The command returns exit code 130 (which corresponds to 128 + SIGINT).
+    """
+
+    command = f"timeout --preserve-status --signal=SIGINT 2s " f"adcli info -v {provider.host.domain} -S localhost"
+
+    result = client.host.conn.run(command, raise_on_error=False)
+
+    assert (
+        result.rc == 130
+    ), f"adcli did not terminate cleanly via SIGINT. Expected exit code 130, got {result.rc}. Stderr: {result.stderr}"
+
+
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+@pytest.mark.importance("high")
+def test_adcli_join_delegated_user_specified_ou(client: Client, provider: GenericADProvider):
+    """
+    :title: adcli join domain by delegated user in specified ou
+    :setup:
+        1. Create a dedicated OU on the AD server.
+        2. Create a standard unprivileged AD user.
+        3. Delegate 'Full Control' (GA) permissions for the OU and its descendants to the user.
+    :steps:
+        1. Execute adcli join with delegated user and the target OU.
+        2. Verify the computer object resides in the correct OU on the AD server.
+    :expectedresults:
+        1. The adcli join wrapper executes without throwing an exception.
+        2. The computer object is found inside the delegated OU.
+    """
+    if provider.role == "samba":
+        pytest.skip("Skipping test: NO Powershell on Samba!!")
+    unique_id = str(uuid.uuid4())[:3]
+    ou_name = f"DelegatedOU_{unique_id}"
+    user_name = f"joinuser_{unique_id}"
+    password = "DelegatedPassword123!"
+
+    ou_dn = f"OU={ou_name},{provider.naming_context}"
+
+    setup_script = f"""
+    Import-Module ActiveDirectory
+    $ErrorActionPreference = "Stop"
+
+    # Create the target OU
+    New-ADOrganizationalUnit -Name "{ou_name}" -Path "{provider.naming_context}"
+
+    # Create the standard user
+    $pass = ConvertTo-SecureString "{password}" -AsPlainText -Force
+    New-ADUser -Name "{user_name}" -SamAccountName "{user_name}" -AccountPassword $pass -Enabled $true -Path "CN=Users,{provider.naming_context}"
+
+    # Get NetBIOS domain name required for dsacls
+    $netbios = (Get-ADDomain).NetBIOSName
+
+    # Grant the user Full Control (Generic All) over the OU and everything inside it
+    # /I:T ensures the user can modify the computer object's attributes after creation
+    dsacls "{ou_dn}" /I:T /G "${{netbios}}\\{user_name}:GA"
+    """
+
+    provider.host.conn.run(setup_script)
+
+    client.adcli.join(
+        domain=provider.host.domain,
+        login_user=user_name,
+        password=password,
+        args=["--verbose", f"--domain-ou={ou_dn}", f"--domain-controller={provider.host.hostname}"],
+        krb=False,
+    )
+
+    short_hostname = client.host.hostname.split(".")[0]
+    verify_script = f"(Get-ADComputer -Identity '{short_hostname}').DistinguishedName"
+
+    verify_result = provider.host.conn.run(verify_script)
+    actual_computer_dn = verify_result.stdout.strip()
+
+    assert (
+        ou_dn in actual_computer_dn
+    ), f"Computer joined, but was not placed in the delegated OU! Expected it in {ou_dn}, found it at {actual_computer_dn}"
