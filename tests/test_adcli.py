@@ -1601,3 +1601,32 @@ def test_adcli_join_delegated_user_specified_ou(client: Client, provider: Generi
     assert (
         ou_dn in actual_computer_dn
     ), f"Computer joined, but was not placed in the delegated OU! Expected it in {ou_dn}, found it at {actual_computer_dn}"
+
+
+@pytest.mark.importance("medium")
+@pytest.mark.topology(KnownTopologyGroup.AnyAD)
+def test_adcli_useful_message_on_failure(client: Client, provider: GenericADProvider):
+    """
+    :title: adcli provides a useful message if command fails
+    :steps:
+        1. Attempt to join the client to the AD-domain using an intentionally incorrect password.
+    :expectedresults:
+        1. The adcli join operation fails with a non-zero return code.
+        2. The standard error contains a useful, descriptive authentication failure message.
+    """
+    bad_password = "ThisIsDefinitelyTheWrongPassword123!"
+
+    join_command = client.adcli.join(
+        domain=provider.host.domain,
+        login_user=provider.host.adminuser,
+        args=["--verbose"],
+        krb=False,
+        password=bad_password,
+    )
+
+    assert join_command.rc != 0, "adcli join unexpectedly succeeded with a bad password!"
+
+    error_output = join_command.stderr.lower()
+    assert (
+        "couldn't authenticate" in error_output or "preauthentication failed" in error_output
+    ), f"Expected a useful authentication error message, but got: {join_command.stderr}"
